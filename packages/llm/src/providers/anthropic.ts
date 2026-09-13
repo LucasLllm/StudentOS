@@ -43,6 +43,12 @@ export class AnthropicProvider implements LlmProvider {
         // Caps thinking + visible output together. Opus 5 thinks by default,
         // so a value tuned for a non-thinking model will truncate answers.
         max_tokens: request.maxOutputTokens ?? 16_000,
+        // Adaptive thinking, unless the caller wants none (a title). Effort maps
+        // straight through; Anthropic's ladder has the same rungs.
+        ...(request.effort === 'none' ? {} : { thinking: { type: 'adaptive' } }),
+        ...(request.effort && request.effort !== 'none'
+          ? { output_config: { effort: request.effort } }
+          : {}),
         system,
         messages,
         tools: toolsFor(request),
@@ -78,9 +84,16 @@ export class AnthropicProvider implements LlmProvider {
         arguments: JSON.stringify(block.input),
       }));
 
+    const reasoningSummary = response.content
+      .filter((block) => block.type === 'thinking')
+      .map((block) => block.thinking)
+      .join('\n');
+
     return {
       content: text,
       toolCalls,
+      payload: { format: 'anthropic_messages', items: response.content },
+      ...(reasoningSummary ? { reasoningSummary } : {}),
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
@@ -186,6 +199,12 @@ export function splitSystem(messages: ChatMessage[]): {
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content }],
         };
+      }
+
+      if (m.role === 'assistant' && m.payload?.format === 'anthropic_messages') {
+        // Thinking blocks carry a signature the API checks on replay; sending the
+        // blocks back untouched is the only way the thinking survives.
+        return { role: 'assistant', content: m.payload.items as Anthropic.ContentBlockParam[] };
       }
 
       // An assistant turn that called tools must replay those tool_use blocks,
