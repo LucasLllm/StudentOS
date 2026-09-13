@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
+import type { ResponseInputItemLike } from 'openai/lib/responses/ResponseInputItems';
 import type {
   ChatChunk,
   ChatMessage,
@@ -193,6 +195,18 @@ export function toResponsesInput(messages: ChatMessage[]): {
     }
 
     if (message.role === 'assistant') {
+      /*
+       * The provider's own items, sent back exactly as it produced them.
+       *
+       * This is what carries the reasoning: the model continues the chain of
+       * thought it had going instead of rebuilding its plan from the text alone.
+       * The SDK helper strips the fields the API refuses on input. Only a payload
+       * in this wire format is replayable; anything else rebuilds the turn below.
+       */
+      if (message.payload?.format === 'openai_responses') {
+        input.push(...toResponseInputItems(message.payload.items as ResponseInputItemLike[]));
+        continue;
+      }
       if (message.content) {
         input.push({ role: 'assistant', content: message.content });
       }

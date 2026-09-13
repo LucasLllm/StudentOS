@@ -124,6 +124,56 @@ describe('toResponsesInput', () => {
       { role: 'user', content: 'bye' },
     ]);
   });
+
+  it('replays its own output items verbatim, reasoning included', () => {
+    const items = [
+      { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
+      {
+        type: 'function_call',
+        id: 'fc_1',
+        call_id: 'call_1',
+        name: 'vault_open',
+        arguments: '{"name":"maths"}',
+        status: 'completed',
+      },
+    ];
+    const { input } = toResponsesInput([
+      { role: 'user', content: 'open maths' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call_1', name: 'vault_open', arguments: '{"name":"maths"}' }],
+        payload: { format: 'openai_responses', items },
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{"body":"…"}' },
+    ]);
+
+    // The reasoning item is there, the call is there once, and the output follows it.
+    expect(
+      input.map((item) =>
+        'type' in item ? (item as { type: string }).type : (item as { role: string }).role,
+      ),
+    ).toEqual(['user', 'reasoning', 'function_call', 'function_call_output']);
+    expect(input[1]).toMatchObject({ type: 'reasoning', encrypted_content: 'opaque' });
+  });
+
+  it('falls back to rebuilding the turn when the payload is another provider’s', () => {
+    const { input } = toResponsesInput([
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        content: 'Let me look.',
+        toolCalls: [{ id: 'call_1', name: 'vault_open', arguments: '{}' }],
+        payload: { format: 'anthropic_messages', items: [{ type: 'text', text: 'Let me look.' }] },
+      },
+      { role: 'tool', toolCallId: 'call_1', content: '{}' },
+    ]);
+    expect(
+      input.map((item) =>
+        'type' in item ? (item as { type: string }).type : (item as { role: string }).role,
+      ),
+    ).toEqual(['user', 'assistant', 'function_call', 'function_call_output']);
+  });
 });
 
 describe('the tools OpenAI receives', () => {
