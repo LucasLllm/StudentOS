@@ -267,6 +267,9 @@ export async function readFileContents(
       const answer = await retrying(() =>
         llm.chat(
           {
+            // Background work the student never waits on; medium is enough for a page
+            // and a fifth of the reasoning bill.
+            effort: 'medium',
             messages: [
               {
                 role: 'system',
@@ -315,6 +318,7 @@ export async function readFileContents(
       const answer = await retrying(() =>
         llm.chat(
           {
+            effort: 'medium',
             messages: [
               {
                 role: 'system',

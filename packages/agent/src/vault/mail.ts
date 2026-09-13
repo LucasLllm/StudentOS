@@ -516,7 +516,13 @@ export async function importMail(
         const answer = await retrying(() =>
           // No tools. Not an omission -- the containment argument rests on it.
           llm.chat(
-            { messages: chatFor(message, entities, neighbours), tools: undefined },
+            {
+              // Background work the student never waits on; medium is enough for a page
+              // and a fifth of the reasoning bill.
+              effort: 'medium',
+              messages: chatFor(message, entities, neighbours),
+              tools: undefined,
+            },
             { userId },
           ),
         );

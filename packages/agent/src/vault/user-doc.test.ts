@@ -62,6 +62,14 @@ describe('writing the user document', () => {
     expect(await readUserDoc(vault)).toBe(page);
   });
 
+  it('reasons at medium, since nobody is waiting on a background write', async () => {
+    const llm = llmSaying('# Lucas');
+    await run(llm);
+
+    const request = llm.chat.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ effort: 'medium' });
+  });
+
   it('keeps the headings and the links the old version stripped', async () => {
     /*
      * The whole point of the change.

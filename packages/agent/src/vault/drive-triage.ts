@@ -298,6 +298,9 @@ async function ask(
     const response = await retrying(() =>
       llm.chat(
         {
+          // Background work the student never waits on; medium is enough for a page
+          // and a fifth of the reasoning bill.
+          effort: 'medium',
           messages: [
             { role: 'system', content: ASK },
             {

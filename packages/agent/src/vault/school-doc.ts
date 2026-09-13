@@ -144,6 +144,9 @@ export async function writeSchoolDoc(
   const brief = await retrying(() =>
     llm.chat(
       {
+        // Background work the student never waits on; medium is enough for a page
+        // and a fifth of the reasoning bill.
+        effort: 'medium',
         messages: [
           { role: 'system', content: BRIEF },
           {
@@ -165,6 +168,7 @@ export async function writeSchoolDoc(
   const found = await retrying(() =>
     llm.chat(
       {
+        effort: 'medium',
         messages: [
           { role: 'system', content: RESEARCH },
           {
@@ -189,6 +193,7 @@ export async function writeSchoolDoc(
   const page = await retrying(() =>
     llm.chat(
       {
+        effort: 'medium',
         messages: [
           { role: 'system', content: SCHOOL_DOC.body },
           {

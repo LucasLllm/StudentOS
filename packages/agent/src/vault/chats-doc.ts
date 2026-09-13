@@ -112,6 +112,9 @@ export async function updateChatsDoc(
   const answer = await retrying(() =>
     llm.chat(
       {
+        // Background work the student never waits on; medium is enough for a page
+        // and a fifth of the reasoning bill.
+        effort: 'medium',
         messages: [
           { role: 'system', content: CHATS_DOC.body },
           {
@@ -223,6 +226,7 @@ export async function forgetChatInChatsDoc(
   const answer = await retrying(() =>
     llm.chat(
       {
+        effort: 'medium',
         messages: [
           { role: 'system', content: CHATS_DOC.body },
           {

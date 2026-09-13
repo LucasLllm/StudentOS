@@ -145,7 +145,9 @@ export async function importConversation(
   ];
 
   // No tools, for the same reason the mail pass has none.
-  const response = await llm.chat({ messages: chat }, { userId });
+  // Background work the student never waits on; medium is enough for a page
+  // and a fifth of the reasoning bill.
+  const response = await llm.chat({ effort: 'medium', messages: chat }, { userId });
   const parsed = parse(response.content);
   if (!parsed || !parsed.keep || parsed.what.trim() === '') return { written: 0 };
 
