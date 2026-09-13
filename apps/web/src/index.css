@@ -964,11 +964,13 @@ hr {
  * The way back down, offered only when it is needed.
  *
  * Sits above the bar and centred on the column, so it reads as belonging to
- * the conversation rather than to the composer.
+ * the conversation rather than to the composer. That takes air between them:
+ * at 4.6rem it rested on the bar with about a pixel to spare and read as a
+ * handle on it. 6rem leaves roughly 1.5rem.
  */
 .to-bottom {
   position: sticky;
-  bottom: 4.6rem;
+  bottom: 6rem;
   z-index: 7;
   align-self: center;
   display: grid;
