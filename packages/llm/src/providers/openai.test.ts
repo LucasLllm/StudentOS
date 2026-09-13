@@ -170,3 +170,66 @@ describe('the reasoning OpenAI is asked for', () => {
     expect(create.mock.calls[0]?.[0]).toMatchObject({ reasoning: { effort: 'xhigh' } });
   });
 });
+
+describe('what OpenAI is asked for', () => {
+  const provider = () => new OpenAiProvider({ apiKey: 'k', model: 'gpt-5.6-luna' });
+  const empty = { output: [], output_text: '', status: 'completed' };
+
+  it('keeps reasoning across turns and asks for its summary', async () => {
+    create.mockResolvedValueOnce(empty);
+    await provider().chat({ messages: [{ role: 'user', content: 'hi' }] }, { userId: 'u1' });
+    expect(create.mock.calls.at(-1)?.[0]).toMatchObject({
+      reasoning: { effort: 'xhigh', context: 'all_turns', summary: 'auto' },
+      include: ['reasoning.encrypted_content'],
+      store: false,
+    });
+  });
+
+  it('lets a caller lower the effort', async () => {
+    create.mockResolvedValueOnce(empty);
+    await provider().chat(
+      { messages: [{ role: 'user', content: 'hi' }], effort: 'low' },
+      { userId: 'u1' },
+    );
+    expect(create.mock.calls.at(-1)?.[0]).toMatchObject({ reasoning: { effort: 'low' } });
+  });
+
+  it('always caps output, and lets a caller choose the cap', async () => {
+    create.mockResolvedValueOnce(empty).mockResolvedValueOnce(empty);
+    await provider().chat({ messages: [{ role: 'user', content: 'hi' }] }, { userId: 'u1' });
+    expect(create.mock.calls.at(-1)?.[0]).toMatchObject({ max_output_tokens: 32_000 });
+    await provider().chat(
+      { messages: [{ role: 'user', content: 'hi' }], maxOutputTokens: 200 },
+      { userId: 'u1' },
+    );
+    expect(create.mock.calls.at(-1)?.[0]).toMatchObject({ max_output_tokens: 200 });
+  });
+
+  it('routes the cache by conversation', async () => {
+    create.mockResolvedValueOnce(empty);
+    await provider().chat(
+      { messages: [{ role: 'user', content: 'hi' }] },
+      { userId: 'u1', agentId: 'agent-7' },
+    );
+    expect(create.mock.calls.at(-1)?.[0]).toMatchObject({ prompt_cache_key: 'agent-7' });
+  });
+
+  it('hands back the raw output items and the reasoning summary', async () => {
+    const output = [
+      {
+        type: 'reasoning',
+        id: 'rs_1',
+        summary: [{ type: 'summary_text', text: 'Checking the dates.' }],
+        encrypted_content: 'opaque',
+      },
+      { type: 'message', id: 'msg_1', role: 'assistant', status: 'completed', content: [] },
+    ];
+    create.mockResolvedValueOnce({ output, output_text: 'done', status: 'completed' });
+    const response = await provider().chat(
+      { messages: [{ role: 'user', content: 'hi' }] },
+      { userId: 'u1' },
+    );
+    expect(response.payload).toEqual({ format: 'openai_responses', items: output });
+    expect(response.reasoningSummary).toBe('Checking the dates.');
+  });
+});

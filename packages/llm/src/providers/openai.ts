@@ -9,6 +9,13 @@ import type {
   ToolCall,
 } from '../types.js';
 
+/**
+ * Reasoning tokens count against this. xhigh on a hard step can spend 10-20k
+ * before a word of the answer; Luna allows 128k. Below this the answer is cut
+ * mid-thought and comes back as status 'incomplete' with no text.
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
+
 export interface OpenAiProviderOptions {
   apiKey: string;
   model: string;
@@ -33,6 +40,13 @@ export interface OpenAiProviderOptions {
  * The alternative was reasoning_effort: 'none', which keeps chat completions
  * working but turns off the reasoning an agent doing multi-step tool use most
  * needs. Responses is also where OpenAI is putting new capability.
+ *
+ * Requests the reasoning items back encrypted (`include:
+ * ['reasoning.encrypted_content']`) and replays them on the next turn via
+ * `payload`, rather than storing anything server-side (`store: false`): we
+ * hold the transcript ourselves, so nothing of a student's chat is retained
+ * by OpenAI, but the model still gets its own prior reasoning back instead of
+ * starting each turn cold.
  */
 export class OpenAiProvider implements LlmProvider {
   readonly id: 'openai' | 'platform';
@@ -51,12 +65,20 @@ export class OpenAiProvider implements LlmProvider {
     const response = await this.#client.responses.create(
       {
         model: this.model,
-        // Pinned rather than left to the API default: every agent turn is
-        // multi-step tool work, which is where extra reasoning pays most.
-        reasoning: { effort: 'xhigh' },
+        // context: all_turns renders the reasoning items replayed from earlier
+        // turns back into the model's context -- the gpt-5.6 default, stated so
+        // it cannot silently change. summary: auto is what the activity feed
+        // can show. Both are no-ops unless the items are actually replayed.
+        reasoning: { effort: request.effort ?? 'xhigh', context: 'all_turns', summary: 'auto' },
+        // We hold the transcript; nothing of a student's chat is retained
+        // server-side. Encrypted reasoning is what makes replay possible without
+        // storage.
+        include: ['reasoning.encrypted_content'],
+        store: false,
+        ...(ctx.agentId ? { prompt_cache_key: ctx.agentId } : {}),
         input,
         ...(instructions ? { instructions } : {}),
-        ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
+        max_output_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         ...(toolsFor(request) ? { tools: toolsFor(request) } : {}),
       },
       { signal: ctx.signal },
@@ -74,9 +96,16 @@ export class OpenAiProvider implements LlmProvider {
     const usageDetails = response.usage?.input_tokens_details as
       { cached_tokens?: number } | undefined;
 
+    const reasoningSummary = response.output
+      .filter((item) => item.type === 'reasoning')
+      .flatMap((item) => item.summary.map((part) => part.text))
+      .join('\n');
+
     return {
       content: response.output_text,
       toolCalls,
+      payload: { format: 'openai_responses', items: response.output },
+      ...(reasoningSummary ? { reasoningSummary } : {}),
       usage: {
         inputTokens: response.usage?.input_tokens ?? 0,
         outputTokens: response.usage?.output_tokens ?? 0,

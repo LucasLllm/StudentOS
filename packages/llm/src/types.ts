@@ -26,6 +26,28 @@ export interface ProviderContext {
 
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+/** Which vendor's wire format `ProviderPayload.items` is shaped for. */
+export type ProviderFormat = 'openai_responses' | 'anthropic_messages';
+
+/**
+ * A provider's own response, kept verbatim instead of translated into the
+ * neutral shape.
+ *
+ * Reasoning items (OpenAI's encrypted `reasoning` blocks, Anthropic's
+ * thinking blocks) don't survive a round trip through a shared
+ * representation -- each vendor's replay format is its own. Carrying them as
+ * opaque `items` under their own `format` tag lets the same adapter that
+ * produced them replay them, without this package having to model what's
+ * inside.
+ */
+export interface ProviderPayload {
+  format: ProviderFormat;
+  items: unknown[];
+}
+
+/** How hard the model should think before answering. */
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
@@ -54,6 +76,12 @@ export interface ChatMessage {
    * registered, which is exactly when it is hardest to notice.
    */
   toolCalls?: ToolCall[];
+  /**
+   * Assistant only: the provider's own output items, replayed verbatim by the
+   * same wire format so its reasoning survives the round trip; a different
+   * format ignores it.
+   */
+  payload?: ProviderPayload;
 }
 
 /**
@@ -86,6 +114,8 @@ export interface ChatRequest {
    * this system can bound.
    */
   webSearch?: { maxUses?: number };
+  /** Omitted means the adapter's default; the agent turn runs xhigh, a title needs none. */
+  effort?: ReasoningEffort;
 }
 
 export interface ToolCall {
@@ -105,6 +135,10 @@ export interface TokenUsage {
 export interface ChatResponse {
   content: string;
   toolCalls: ToolCall[];
+  /** The provider's own output items, to replay on the next turn. */
+  payload?: ProviderPayload;
+  /** Human-readable summary of the model's reasoning, when the provider offers one. */
+  reasoningSummary?: string;
   usage: TokenUsage;
   finishReason: 'stop' | 'tool_calls' | 'length' | 'other';
 }
