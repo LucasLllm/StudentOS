@@ -61,8 +61,9 @@ export class ToolRegistry {
    * Parse arguments and run the tool.
    *
    * `rawArguments` is the JSON string the model produced. It is parsed and
-   * schema-validated here, so a malformed tool call becomes an error message
-   * the model can recover from rather than a thrown exception mid-run.
+   * schema-validated here, and the tool body is run inside a try/catch, so a
+   * malformed tool call or a thrown error both become an error message the
+   * model can recover from rather than a thrown exception mid-run.
    */
   async execute(id: string, rawArguments: string, ctx: ToolContext): Promise<unknown> {
     const tool = this.#tools.get(id);
@@ -82,6 +83,10 @@ export class ToolRegistry {
       return { error: `Invalid arguments: ${result.error.message}` };
     }
 
-    return tool.execute(result.data as never, ctx);
+    try {
+      return await tool.execute(result.data as never, ctx);
+    } catch (error) {
+      return { error: `${id} failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 }

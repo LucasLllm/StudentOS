@@ -92,6 +92,21 @@ describe('execute', () => {
   it('returns an error object for an unknown tool', async () => {
     expect(await registry.execute('nope', '{}', ctx)).toEqual({ error: 'Unknown tool "nope"' });
   });
+
+  it('turns a thrown error into a result the model can act on', async () => {
+    const tools = new ToolRegistry();
+    tools.register({
+      id: 'boom',
+      description: 'throws',
+      inputSchema: z.object({}),
+      execute: async () => {
+        throw new Error('upstream 503');
+      },
+    } as never);
+    await expect(tools.execute('boom', '{}', ctx)).resolves.toEqual({
+      error: 'boom failed: upstream 503',
+    });
+  });
 });
 
 describe('toDefinitions', () => {
