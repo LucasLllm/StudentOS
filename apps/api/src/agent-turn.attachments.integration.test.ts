@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Vault } from '@contexto/agent';
+import { PostgresTranscriptStore, Vault } from '@contexto/agent';
 import { runTurnForAgent } from './agent-turn.js';
 import { resetTurns } from './turns-in-flight.js';
 import { createAgent, createUser, reset, testDb } from './test-support/harness.js';
@@ -30,6 +30,9 @@ const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
  * the chat is another, running beside it -- so they are told apart by the
  * turn context wrapper rather than by counting. Counting was what broke when
  * naming arrived, and would break again on the next thing that runs alongside.
+ *
+ * The last user message, not the first: a turn now replays the whole
+ * conversation, and every earlier question is a user message too.
  */
 let seen: string[];
 
@@ -39,13 +42,14 @@ async function contextWith(vaultRoot: string): Promise<AppContext> {
     db: await testDb(),
     llm: {
       chat: async ({ messages }: { messages: { role: string; content: string }[] }) => {
-        const user = messages.find((m) => m.role === 'user');
+        const user = messages.findLast((m) => m.role === 'user');
         if (user?.content.includes('<turn_context>')) seen.push(user.content);
         return { content: 'ok', toolCalls: [], usage, finishReason: 'stop' as const };
       },
     },
     memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
     skills: { list: async () => [] },
+    transcript: new PostgresTranscriptStore(await testDb()),
     auth: {},
     youtube: {},
     youtubeTranscripts: {},

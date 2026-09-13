@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +8,7 @@ import { runAgentTurn } from '../run.js';
 import type { AgentRunDeps } from '../run.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { searchMemory } from '../tools/memory.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
 import { tmpdir } from 'node:os';
 import { collectExchanges } from '../memory/summarize.js';
 import { updateChatsDoc } from '../vault/chats-doc.js';
@@ -89,6 +91,35 @@ function seededStore(history: string[], queries: { q: string; hits: number }[]):
 }
 
 /**
+ * The same history, as the conversation the turn now replays.
+ *
+ * The window the eval measures against is no longer a recall limit but the
+ * transcript itself, so the case's exchanges have to be items in it: each
+ * stored row is one student message and one reply, which is what the model
+ * would have seen had it lived through them.
+ */
+async function seededTranscript(history: string[]): Promise<InMemoryTranscriptStore> {
+  const transcript = new InMemoryTranscriptStore();
+  for (const row of history) {
+    const split = row.indexOf('\nAgent: ');
+    const turnId = randomUUID();
+    await transcript.append([
+      {
+        agentId: 'eval',
+        turnId,
+        payload: { kind: 'user', content: row.slice('Student: '.length, split) },
+      },
+      {
+        agentId: 'eval',
+        turnId,
+        payload: { kind: 'assistant', content: row.slice(split + '\nAgent: '.length) },
+      },
+    ]);
+  }
+  return transcript;
+}
+
+/**
  * Write the chats page from this case's history, with the real writer.
  *
  * Hand-writing the page would measure a document we invented rather than the
@@ -135,9 +166,11 @@ async function runCase(apiKey: string, testCase: MemoryCase, profile?: string): 
   const queries: { q: string; hits: number }[] = [];
   const deps = {
     llm: { chat: provider.chat.bind(provider) },
+    // Still the memory store, because memory_search is what this measures.
     memory: seededStore(testCase.history, queries),
     skills: { list: async () => [] },
     tools,
+    transcript: await seededTranscript(testCase.history),
   } as unknown as AgentRunDeps;
 
   const used: string[] = [];
@@ -147,7 +180,7 @@ async function runCase(apiKey: string, testCase: MemoryCase, profile?: string): 
     purpose: 'keep me on top of my a-levels and stop me missing deadlines',
     message: testCase.question,
     timezone: 'Europe/London',
-    ...(profile ? { profile } : {}),
+    ...(profile ? { about: profile } : {}),
     onActivity: (a: AgentActivity) => {
       if (a.kind === 'tool' && a.name) used.push(a.name);
     },

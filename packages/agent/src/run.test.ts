@@ -4,10 +4,22 @@ import { buildSystemPrompt, currentTimeSection, runAgentTurn } from './run.js';
 import { RESPONDING, VAULT_READING } from './prompts/documents.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadSkill } from './tools/skills.js';
+import { InMemoryTranscriptStore } from './transcript/in-memory.js';
 import type { ToolContext } from './tools/types.js';
 import type { AgentRunDeps } from './run.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 };
+
+/** Everything a turn needs, with a transcript of its own to talk into. */
+function depsWith(chat: (request: unknown) => Promise<unknown>, tools = new ToolRegistry()) {
+  return {
+    llm: { chat },
+    memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+    skills: { list: async () => [] },
+    tools,
+    transcript: new InMemoryTranscriptStore(),
+  } as unknown as AgentRunDeps;
+}
 
 /**
  * Temporal grounding.
@@ -116,6 +128,7 @@ describe('tool context', () => {
       },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
 
     await runAgentTurn(deps, {
@@ -148,6 +161,7 @@ describe('always answering', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools: new ToolRegistry(),
+      transcript: new InMemoryTranscriptStore(),
     }) as unknown as AgentRunDeps;
 
   const input = { userId: 'u1', agentId: 'a1', purpose: 'test', message: 'go' } as never;
@@ -216,6 +230,7 @@ describe('always answering', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
 
     const { reply } = await runAgentTurn(runDeps, input);
@@ -241,6 +256,7 @@ describe('a reply with no text field', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools: new ToolRegistry(),
+      transcript: new InMemoryTranscriptStore(),
     }) as unknown as AgentRunDeps;
 
   it('does not throw when content is missing entirely', async () => {
@@ -303,6 +319,7 @@ describe('reporting activity', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
   }
 
@@ -396,6 +413,7 @@ describe('reporting a skill', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
   }
 
@@ -455,36 +473,21 @@ describe('reporting a skill', () => {
  */
 describe('the assembled system prompt', () => {
   /** Records the messages the turn sends, then replies. */
-  function capturing(seen: { role: string; content: string }[], recent: Recalled = []) {
-    return {
-      llm: {
-        async chat({ messages }: { messages: { role: string; content: string }[] }) {
-          seen.push(...messages);
-          return {
-            content: 'done',
-            toolCalls: [],
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            finishReason: 'stop' as const,
-          };
-        },
-      },
-      memory: {
-        recall: async () => ({ summaries: [], recent }),
-        record: async () => ({}),
-      },
-      skills: { list: async () => [] },
-      tools: new ToolRegistry(),
-    } as unknown as AgentRunDeps;
+  function capturing(seen: { role: string; content: string }[]) {
+    return depsWith(async (request) => {
+      seen.push(...(request as { messages: { role: string; content: string }[] }).messages);
+      return {
+        content: 'done',
+        toolCalls: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: 'stop' as const,
+      };
+    });
   }
 
-  type Recalled = { kind: string; content: string }[];
-
-  async function messagesFor(
-    recent: Recalled,
-    about?: string,
-  ): Promise<{ role: string; content: string }[]> {
+  async function messagesFor(about?: string): Promise<{ role: string; content: string }[]> {
     const seen: { role: string; content: string }[] = [];
-    await runAgentTurn(capturing(seen, recent), {
+    await runAgentTurn(capturing(seen), {
       userId: 'u1',
       agentId: 'a1',
       purpose: 'keep me on top of chemistry',
@@ -495,12 +498,12 @@ describe('the assembled system prompt', () => {
     return seen;
   }
 
-  async function systemPrompt(recent: Recalled = [], about?: string): Promise<string> {
-    return (await messagesFor(recent, about)).find((m) => m.role === 'system')?.content ?? '';
+  async function systemPrompt(about?: string): Promise<string> {
+    return (await messagesFor(about)).find((m) => m.role === 'system')?.content ?? '';
   }
 
-  async function userMessage(recent: Recalled = []): Promise<string> {
-    return (await messagesFor(recent)).find((m) => m.role === 'user')?.content ?? '';
+  async function userMessage(): Promise<string> {
+    return (await messagesFor()).find((m) => m.role === 'user')?.content ?? '';
   }
 
   it('carries the responding document', async () => {
@@ -601,41 +604,50 @@ describe('the assembled system prompt', () => {
    * A comment asking future editors to keep volatile text out cannot fail.
    * These can.
    */
-  it('keeps the clock and the memory out of the system prompt', async () => {
+  it('keeps the clock out of the system prompt', async () => {
     const prompt = await systemPrompt();
     expect(prompt).not.toContain('Right now it is');
-    expect(prompt).not.toContain('Recently:');
   });
 
-  it('sends a byte-identical system prompt when only the memory has changed', async () => {
-    const first = await systemPrompt([{ kind: 'conversation', content: 'Student: a\nAgent: b' }]);
-    const second = await systemPrompt([
-      { kind: 'conversation', content: 'Student: a\nAgent: b' },
-      { kind: 'conversation', content: 'Student: c\nAgent: d' },
-    ]);
-    expect(second).toBe(first);
+  it('sends a byte-identical system prompt as the conversation grows', async () => {
+    // The point of the whole layout: what moves lives in the message list, so
+    // the prompt above it stays cacheable however long the conversation gets.
+    const seen: { role: string; content: string }[] = [];
+    const deps = capturing(seen);
+    const turn = {
+      userId: 'u1',
+      agentId: 'a1',
+      purpose: 'keep me on top of chemistry',
+      message: 'go',
+      timezone: 'Europe/London',
+    } as never;
+
+    await runAgentTurn(deps, turn);
+    await runAgentTurn(deps, turn);
+
+    const prompts = seen.filter((m) => m.role === 'system');
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]?.content).toBe(prompts[0]?.content);
   });
 
-  it('still gives the model the clock and the memory, in the turn instead', async () => {
-    // Moving them must not lose them: an agent that cannot resolve "tomorrow"
+  it('still gives the model the clock, in the turn instead', async () => {
+    // Moving it must not lose it: an agent that cannot resolve "tomorrow"
     // is broken in a way no caching win would justify.
-    const user = await userMessage([{ kind: 'conversation', content: 'Student: a\nAgent: b' }]);
+    const user = await userMessage();
     expect(user).toContain('Right now it is');
     expect(user).toContain('Their timezone is');
-    expect(user).toContain('Recently:');
-    expect(user).toContain('Student: a');
   });
 
   it('marks the context off from what the student actually typed', async () => {
     // It rides in the user message, so without a boundary the model reads the
-    // memory dump as something the student wrote.
-    const user = await userMessage([]);
+    // clock as something the student wrote.
+    const user = await userMessage();
     expect(user).toMatch(/<turn_context>[\s\S]*<\/turn_context>/);
     expect(user.indexOf('</turn_context>')).toBeLessThan(user.indexOf('go'));
   });
 
   it('carries the page the vault writes about the student', async () => {
-    const prompt = await systemPrompt([], '# Lucas\n\n- [[class-french]] — taught by Mme Rivard');
+    const prompt = await systemPrompt('# Lucas\n\n- [[class-french]] — taught by Mme Rivard');
     expect(prompt).toContain('[[class-french]]');
     expect(prompt).toMatch(/what their vault says about them/i);
   });
@@ -643,7 +655,7 @@ describe('the assembled system prompt', () => {
   it('keeps that page above everything volatile, so it stays cached', async () => {
     // It is rewritten between conversations at most, which makes it per-agent
     // rather than per-turn -- the tier that still caches.
-    const prompt = await systemPrompt([], '# Lucas');
+    const prompt = await systemPrompt('# Lucas');
     expect(prompt.indexOf('# Lucas')).toBeGreaterThan(-1);
     expect(prompt).not.toContain('Right now it is');
   });
@@ -651,7 +663,7 @@ describe('the assembled system prompt', () => {
   it('carries no heading at all for a student nothing has been written about', async () => {
     // An empty section would cost tokens in the cached prefix on every turn
     // of every conversation, for every new student, forever.
-    expect(await systemPrompt([], '')).not.toMatch(/what their vault says about them/i);
+    expect(await systemPrompt('')).not.toMatch(/what their vault says about them/i);
   });
 
   it('no longer carries a second, per-agent document about the same student', async () => {
@@ -660,7 +672,7 @@ describe('the assembled system prompt', () => {
      * one agent. The split was wrong rather than merely wasteful -- a student
      * with three agents told each of them separately that they read on a phone.
      */
-    expect(await systemPrompt([], '# Lucas')).not.toMatch(/what you know about this student/i);
+    expect(await systemPrompt('# Lucas')).not.toMatch(/what you know about this student/i);
   });
 
   it('does not still carry the instruction the document replaced', async () => {
@@ -717,6 +729,7 @@ describe('what the model is asked for', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools: new ToolRegistry(),
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
     await runAgentTurn(deps, { userId: 'u1', agentId: 'a1', purpose: '', message: 'hi' } as never);
     expect(seen[0]).toMatchObject({ effort: 'xhigh', maxOutputTokens: 32_000 });
@@ -752,9 +765,235 @@ describe('what the model is asked for', () => {
       memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
     await runAgentTurn(deps, { userId: 'u1', agentId: 'a1', purpose: '', message: 'go' } as never);
     const assistant = requests[1]?.messages.find((m) => m.role === 'assistant');
     expect(assistant?.payload).toEqual(payload);
+  });
+});
+
+/**
+ * The turn replays the conversation rather than a summary of it.
+ *
+ * What the model is sent is now the stored transcript: the student's words,
+ * its own replies, the tools it called and what they returned. The failure
+ * this guards against is the one the memory block had -- an agent that is told
+ * about its last turn in the third person, cannot see the tool result it just
+ * read, and asks the student to repeat themselves.
+ */
+describe('the conversation the model sees', () => {
+  type Request = { messages: { role: string; content: string; payload?: unknown }[] };
+
+  const input = (message: string, extra: Record<string, unknown> = {}) =>
+    ({ userId: 'u1', agentId: 'a1', purpose: 'test', message, ...extra }) as never;
+
+  const answer = (content: string) => ({
+    content,
+    toolCalls: [],
+    usage,
+    finishReason: 'stop' as const,
+  });
+
+  const callTool = (name: string, payload?: unknown) => ({
+    content: '',
+    toolCalls: [{ id: 'c1', name, arguments: '{}' }],
+    ...(payload ? { payload } : {}),
+    usage,
+    finishReason: 'tool_calls' as const,
+  });
+
+  /** One tool, doing whatever the test needs it to do. */
+  function registry(id: string, execute: () => Promise<unknown>): ToolRegistry {
+    const tools = new ToolRegistry();
+    tools.register({
+      id,
+      description: 'a tool',
+      inputSchema: z.object({}),
+      execute,
+    } as never);
+    return tools;
+  }
+
+  it('replays the last turn, tools and all', async () => {
+    const payload = { format: 'openai_responses' as const, items: [{ type: 'reasoning' }] };
+    const requests: Request[] = [];
+    let call = 0;
+    const deps = depsWith(
+      async (request) => {
+        requests.push(request as Request);
+        call += 1;
+        if (call === 1) return callTool('probe', payload);
+        return answer(call === 2 ? 'A' : 'B');
+      },
+      registry('probe', async () => 'ok'),
+    );
+
+    await runAgentTurn(deps, input('first question'));
+    await runAgentTurn(deps, input('second question'));
+
+    const replay = requests[2];
+    expect(replay?.messages.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'user',
+    ]);
+    // The stored message, as the student typed it: the clock that rode with it
+    // has been stale for a turn and must not be replayed as if it were true.
+    expect(replay?.messages[1]?.content).toContain('first question');
+    expect(replay?.messages[1]?.content).not.toContain('<turn_context>');
+    // Its own reasoning back, so the second turn continues the first rather
+    // than starting over from the text.
+    expect(replay?.messages[2]?.payload).toEqual(payload);
+    expect(replay?.messages[4]?.content).toBe('A');
+    expect(replay?.messages[5]?.content).toContain('<turn_context>');
+    expect(replay?.messages[5]?.content).toContain('second question');
+  });
+
+  it('no longer pastes memory into the turn', async () => {
+    const requests: Request[] = [];
+    const deps = {
+      llm: {
+        chat: async (request: unknown) => {
+          requests.push(request as Request);
+          return answer('ok');
+        },
+      },
+      memory: {
+        recall: async () => ({
+          summaries: [],
+          recent: [{ kind: 'conversation', content: 'Student: NEVER SEEN\nAgent: nor this' }],
+        }),
+        record: async () => ({}),
+      },
+      skills: { list: async () => [] },
+      tools: new ToolRegistry(),
+      transcript: new InMemoryTranscriptStore(),
+    } as unknown as AgentRunDeps;
+
+    await runAgentTurn(deps, input('go'));
+
+    expect(JSON.stringify(requests)).not.toContain('NEVER SEEN');
+  });
+
+  it('runs independent tool calls at once', async () => {
+    const events: string[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const tools = new ToolRegistry();
+    for (const id of ['one', 'two']) {
+      tools.register({
+        id,
+        description: 'a tool',
+        inputSchema: z.object({}),
+        execute: async () => {
+          events.push(`start ${id}`);
+          // Only once both are in flight -- run one after the other and this
+          // never resolves, so the test times out rather than passing slowly.
+          if (events.length === 2) release();
+          await gate;
+          events.push(`done ${id}`);
+          return 'ok';
+        },
+      } as never);
+    }
+
+    let call = 0;
+    const deps = depsWith(async () => {
+      call += 1;
+      return call === 1
+        ? {
+            content: '',
+            toolCalls: [
+              { id: 'c1', name: 'one', arguments: '{}' },
+              { id: 'c2', name: 'two', arguments: '{}' },
+            ],
+            usage,
+            finishReason: 'tool_calls' as const,
+          }
+        : answer('done');
+    }, tools);
+
+    await runAgentTurn(deps, input('go'));
+
+    expect(events.slice(0, 2)).toEqual(['start one', 'start two']);
+    expect(events).toHaveLength(4);
+  });
+
+  it("keeps a tool's error inside the turn", async () => {
+    const requests: Request[] = [];
+    let call = 0;
+    const deps = depsWith(
+      async (request) => {
+        requests.push(request as Request);
+        call += 1;
+        return call === 1 ? callTool('boom') : answer('The site would not load.');
+      },
+      registry('boom', async () => {
+        throw new Error('no network');
+      }),
+    );
+
+    const { reply } = await runAgentTurn(deps, input('go'));
+
+    expect(reply).toBe('The site would not load.');
+    expect(requests[1]?.messages.find((m) => m.role === 'tool')?.content).toContain('failed: ');
+  });
+
+  it('cuts an oversized tool result before the model sees it', async () => {
+    const requests: Request[] = [];
+    let call = 0;
+    const deps = depsWith(
+      async (request) => {
+        requests.push(request as Request);
+        call += 1;
+        return call === 1 ? callTool('firehose') : answer('done');
+      },
+      registry('firehose', async () => 'x'.repeat(50_000)),
+    );
+
+    await runAgentTurn(deps, input('go'));
+
+    expect(requests[1]?.messages.find((m) => m.role === 'tool')?.content).toContain(
+      'characters truncated',
+    );
+  });
+
+  it("writes nothing after the student's message when the loop throws", async () => {
+    // Half a turn is worse than none: a stored assistant item with no result
+    // beside it would be replayed forever as a reply that never happened.
+    const deps = depsWith(async () => {
+      throw new Error('the model is down');
+    });
+
+    await expect(runAgentTurn(deps, input('go'))).rejects.toThrow('the model is down');
+
+    const items = await deps.transcript.load('a1');
+    expect(items).toHaveLength(1);
+    expect(items[0]?.payload.kind).toBe('user');
+  });
+
+  it('stores the files with the message that brought them, and only there', async () => {
+    const requests: Request[] = [];
+    const deps = depsWith(async (request) => {
+      requests.push(request as Request);
+      return answer('ok');
+    });
+
+    await runAgentTurn(
+      deps,
+      input('what is this', { attachments: [{ name: 'board', body: 'A brass connector.' }] }),
+    );
+    await runAgentTurn(deps, input('what size is the thread'));
+
+    const users = requests[1]?.messages.filter((m) => m.role === 'user') ?? [];
+    expect(users[0]?.content).toContain('A brass connector.');
+    expect(users.at(-1)?.content).not.toContain('A brass connector.');
   });
 });

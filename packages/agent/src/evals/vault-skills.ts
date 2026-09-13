@@ -7,6 +7,7 @@ import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
 import { runAgentTurn } from '../run.js';
 import { gradeReply } from './memory-grader.js';
 import type { AgentRunDeps } from '../run.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { searchVault } from '../tools/vault.js';
 import { importMail } from '../vault/mail.js';
@@ -365,6 +366,7 @@ async function runReadCase(apiKey: string, testCase: ReadCase): Promise<ReadOutc
       },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
 
     const { reply } = await runAgentTurn(deps, {

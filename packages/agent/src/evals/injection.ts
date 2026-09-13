@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
 import { runAgentTurn } from '../run.js';
 import type { AgentRunDeps } from '../run.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
 import { openVaultDocument } from '../tools/documents.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { loadSkill } from '../tools/skills.js';
@@ -271,6 +272,7 @@ async function runCase(apiKey: string, testCase: InjectionCase): Promise<Outcome
     },
     skills: { list: async () => [] },
     tools,
+    transcript: new InMemoryTranscriptStore(),
   } as unknown as AgentRunDeps;
 
   const { reply } = await runAgentTurn(deps, {

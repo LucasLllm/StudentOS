@@ -3,8 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
+import type { ChatMessage } from '@contexto/llm';
 import { buildSystemPrompt, buildTurnContext, buildUserMessage } from '../run.js';
-import type { EpisodicMemory } from '../memory/types.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
+import { renderTranscript } from '../transcript/render.js';
 import type { SkillRegistry } from '../skills/types.js';
 
 /**
@@ -66,27 +68,40 @@ const SKILLS = [
   },
 ] as unknown as Awaited<ReturnType<SkillRegistry['list']>>;
 
-function memory(count: number): { summaries: never[]; recent: EpisodicMemory[] } {
-  const now = new Date('2026-08-22T18:00:00Z');
-  return {
-    summaries: [],
-    recent: Array.from({ length: count }, (_, i) => ({
-      id: `m${i}`,
-      agentId: 'eval',
-      kind: 'conversation' as EpisodicMemory['kind'],
-      content:
-        `Student: question number ${i} about chemistry coursework\n` +
-        'Agent: a reply of ordinary length about the coursework, roughly what a real turn produces',
-      source: 'agent_run',
-      occurredAt: now,
-      createdAt: now,
-    })),
-  };
+/** The conversation so far, as a turn would replay it. */
+async function history(exchanges: number): Promise<ChatMessage[]> {
+  const transcript = new InMemoryTranscriptStore();
+  for (let i = 0; i < exchanges; i += 1) {
+    const turnId = randomUUID();
+    await transcript.append([
+      {
+        agentId: 'eval',
+        turnId,
+        payload: { kind: 'user', content: `question number ${i} about chemistry coursework` },
+      },
+      {
+        agentId: 'eval',
+        turnId,
+        payload: {
+          kind: 'assistant',
+          content:
+            'a reply of ordinary length about the coursework, roughly what a real turn produces',
+        },
+      },
+    ]);
+  }
+  return renderTranscript(await transcript.load('eval'));
+}
+
+/** The same exchanges pasted into the prompt, which is what the arms compare. */
+function pasted(messages: ChatMessage[]): string {
+  return 'Recently:\n' + messages.map((m) => `- ${m.role}: ${m.content}`).join('\n');
 }
 
 interface Turn {
   system: string;
-  user: string;
+  /** Everything after the system prompt, in order, ending in this turn's question. */
+  messages: ChatMessage[];
 }
 
 interface Arm {
@@ -95,29 +110,43 @@ interface Arm {
   turns: [Turn, Turn];
 }
 
-function arms(): Arm[] {
+async function arms(): Promise<Arm[]> {
   const salt = () => `Session ${randomUUID()}.\n\n`;
   const system = buildSystemPrompt(PURPOSE, SKILLS);
-  const context = (n: number) => buildTurnContext(memory(n), TIMEZONE);
+  const clock = buildTurnContext(TIMEZONE);
+  const [six, seven] = await Promise.all([history(6), history(7)]);
 
   const beforeSalt = salt();
   const afterSalt = salt();
+  const question = (content: string): ChatMessage[] => [{ role: 'user', content }];
 
   return [
     {
       name: 'before',
-      note: 'clock + memory inside the system prompt',
+      note: 'clock + history inside the system prompt',
       turns: [
-        { system: `${beforeSalt}${system}\n\n${context(6)}`, user: QUESTION },
-        { system: `${beforeSalt}${system}\n\n${context(7)}`, user: QUESTION },
+        {
+          system: `${beforeSalt}${system}\n\n${pasted(six)}\n\n${clock}`,
+          messages: question(QUESTION),
+        },
+        {
+          system: `${beforeSalt}${system}\n\n${pasted(seven)}\n\n${clock}`,
+          messages: question(QUESTION),
+        },
       ],
     },
     {
       name: 'after',
       note: 'system prompt static, volatile in the turn',
       turns: [
-        { system: afterSalt + system, user: buildUserMessage(context(6), QUESTION) },
-        { system: afterSalt + system, user: buildUserMessage(context(7), QUESTION) },
+        {
+          system: afterSalt + system,
+          messages: [...six, ...question(buildUserMessage(clock, QUESTION))],
+        },
+        {
+          system: afterSalt + system,
+          messages: [...seven, ...question(buildUserMessage(clock, QUESTION))],
+        },
       ],
     },
   ];
@@ -135,12 +164,7 @@ async function main(): Promise<void> {
   const provider = new OpenAiProvider({ apiKey, model: PLATFORM_MODEL });
   const ask = async (turn: Turn) => {
     const response = await provider.chat(
-      {
-        messages: [
-          { role: 'system', content: turn.system },
-          { role: 'user', content: turn.user },
-        ],
-      },
+      { messages: [{ role: 'system', content: turn.system }, ...turn.messages] },
       { userId: 'eval', agentId: 'eval' },
     );
     return response.usage;
@@ -149,7 +173,7 @@ async function main(): Promise<void> {
   console.log(`Model ${PLATFORM_MODEL}. Two turns per arm; turn two is what caching pays for.\n`);
 
   const results: { arm: Arm; input: number; cached: number }[] = [];
-  for (const arm of arms()) {
+  for (const arm of await arms()) {
     // Sequential, same arm first: turn two can only read what turn one wrote.
     await ask(arm.turns[0]);
     const usage = await ask(arm.turns[1]);

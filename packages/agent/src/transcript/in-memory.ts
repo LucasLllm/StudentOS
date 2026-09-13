@@ -17,7 +17,11 @@ export class InMemoryTranscriptStore implements TranscriptStore {
   async load(agentId: string): Promise<TranscriptItem[]> {
     const items = this.itemsByAgent.get(agentId) ?? [];
     const compaction = [...items].reverse().find((item) => item.payload.kind === 'compaction');
-    if (!compaction || compaction.payload.kind !== 'compaction') return items;
+    // A copy, never the list itself: a caller that loads the history and then
+    // appends to it -- which is exactly what a turn does -- would otherwise
+    // watch its own writes appear in what it had already read, and no database
+    // behaves that way.
+    if (!compaction || compaction.payload.kind !== 'compaction') return [...items];
 
     const coversThroughSeq = compaction.payload.coversThroughSeq;
     return [

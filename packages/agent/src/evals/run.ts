@@ -1,10 +1,13 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
+import type { ChatMessage } from '@contexto/llm';
 import { buildSystemPrompt, buildTurnContext, buildUserMessage } from '../run.js';
 import { RESPONDING } from '../prompts/documents.js';
-import type { EpisodicMemory } from '../memory/types.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
+import { renderTranscript } from '../transcript/render.js';
 import { EVAL_CASES } from './cases.js';
 import { FORMATTING_RULES, checkReply, type Severity } from './rules.js';
 
@@ -119,20 +122,32 @@ const POLLUTED_HISTORY: string[] = [
     '- **Talk to someone**\n\nWould you like me to help you prioritise?',
 ];
 
-function pollutedRecall(): { summaries: never[]; recent: EpisodicMemory[] } {
-  const now = new Date('2026-08-22T18:00:00Z');
-  return {
-    summaries: [],
-    recent: POLLUTED_HISTORY.map((content, i) => ({
-      id: `m${i}`,
-      agentId: 'eval',
-      kind: 'conversation' as EpisodicMemory['kind'],
-      content,
-      source: 'agent_run',
-      occurredAt: now,
-      createdAt: now,
-    })),
-  };
+/**
+ * The same dose, as the conversation the turn replays.
+ *
+ * Stored as the agent's own replies rather than as a block of remembered text,
+ * because that is what the pressure now is: twenty assistant messages in its
+ * own voice, immediately above the question it is being asked.
+ */
+async function pollutedHistory(): Promise<ChatMessage[]> {
+  const transcript = new InMemoryTranscriptStore();
+  for (const row of POLLUTED_HISTORY) {
+    const split = row.indexOf('\nAgent: ');
+    const turnId = randomUUID();
+    await transcript.append([
+      {
+        agentId: 'eval',
+        turnId,
+        payload: { kind: 'user', content: row.slice('Student: '.length, split) },
+      },
+      {
+        agentId: 'eval',
+        turnId,
+        payload: { kind: 'assistant', content: row.slice(split + '\nAgent: '.length) },
+      },
+    ]);
+  }
+  return renderTranscript(await transcript.load('eval'));
 }
 
 const PURPOSE = 'keep me on top of my a-levels and stop me missing deadlines';
@@ -142,12 +157,13 @@ interface Arm {
   name: string;
   blurb: string;
   system: string;
+  /** What the conversation had already said, replayed before the question. */
+  history: ChatMessage[];
   /** The student's message, with this turn's context in front of it. */
   user: (message: string) => string;
 }
 
-function arms(): Arm[] {
-  const clean = { summaries: [], recent: [] };
+async function arms(): Promise<Arm[]> {
   const withDoc = buildSystemPrompt(PURPOSE, []);
 
   // Removing the document from the assembled prompt, rather than assembling a
@@ -159,24 +175,25 @@ function arms(): Arm[] {
     );
   }
 
-  const cleanTurn = (message: string) =>
-    buildUserMessage(buildTurnContext(clean, TIMEZONE), message);
+  const turn = (message: string) => buildUserMessage(buildTurnContext(TIMEZONE), message);
 
   return [
     {
       name: 'without',
       blurb: 'prompt as it was before 23 Aug',
       system: withoutDoc,
-      user: cleanTurn,
+      history: [],
+      user: turn,
     },
-    { name: 'with', blurb: 'production today', system: withDoc, user: cleanTurn },
+    { name: 'with', blurb: 'production today', system: withDoc, history: [], user: turn },
     {
       name: 'polluted',
       blurb: `production + ${POLLUTED_HISTORY.length} markdown-heavy past replies`,
       system: withDoc,
-      // The history now rides in the turn rather than the system prompt, which
-      // is where production puts it. Same dose, same position.
-      user: (message) => buildUserMessage(buildTurnContext(pollutedRecall(), TIMEZONE), message),
+      // The history is now the conversation itself rather than a block of
+      // remembered text, which is where production puts it. Same dose.
+      history: await pollutedHistory(),
+      user: turn,
     },
   ];
 }
@@ -223,7 +240,7 @@ async function main(): Promise<void> {
   }
 
   const provider = new OpenAiProvider({ apiKey, model: PLATFORM_MODEL });
-  const armList = arms();
+  const armList = await arms();
   const jobs = armList.flatMap((arm) => EVAL_CASES.map((c) => ({ arm, case: c })));
 
   console.log(
@@ -239,6 +256,7 @@ async function main(): Promise<void> {
       {
         messages: [
           { role: 'system', content: job.arm.system },
+          ...job.arm.history,
           { role: 'user', content: job.arm.user(job.case.message) },
         ],
       },

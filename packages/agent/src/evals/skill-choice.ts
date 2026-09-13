@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
 import { runAgentTurn } from '../run.js';
 import type { AgentRunDeps } from '../run.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
 import { buildToolRegistry } from '../tools/builtin.js';
 import type { PortalSnapshotSource, ToolContext } from '../tools/types.js';
 import { USER_DOC_NAME, writeDocument } from '../vault/documents.js';
@@ -555,6 +556,7 @@ async function runCase(apiKey: string, testCase: Case): Promise<Outcome> {
       },
       skills: { list: async () => [] },
       tools,
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
 
     const { reply } = await runAgentTurn(deps, {

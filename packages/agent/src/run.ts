@@ -1,8 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentActivity } from '@contexto/shared';
-import type { ChatMessage, LlmRegistry } from '@contexto/llm';
+import type { ChatMessage, ChatResponse, LlmRegistry } from '@contexto/llm';
 import { RESPONDING } from './prompts/documents.js';
 import { skillsSection } from './skills/builtin.js';
 import { skillRequested } from './tools/skills.js';
+import { renderTranscript, renderUserItem } from './transcript/render.js';
+import { truncateToolResult } from './transcript/truncate.js';
+import type {
+  AppendTranscriptInput,
+  TranscriptPayload,
+  TranscriptStore,
+} from './transcript/types.js';
 import type { MemoryStore } from './memory/types.js';
 import type { SkillRegistry } from './skills/types.js';
 import type { GoogleTokenProvider, ToolContext, PortalSnapshotSource } from './tools/types.js';
@@ -14,9 +22,14 @@ import type { Vault } from './vault/vault.js';
 /**
  * One turn of an agent.
  *
- * Gather context (memory + skills), call the model, run whatever tools it asks
- * for, feed the results back, repeat until it stops calling tools. Then write
- * what happened to memory so the next turn has it.
+ * Replay the conversation from the transcript, add what the student just said,
+ * call the model, run whatever tools it asks for, feed the results back, repeat
+ * until it stops calling tools. Everything the turn produced -- replies, tool
+ * calls, tool results, the model's own reasoning -- is appended to the
+ * transcript at the end, because that is what the next turn replays.
+ *
+ * The transcript is the memory. What the agent knows about earlier in this
+ * conversation is not a summary of it: it is the conversation.
  */
 
 export interface AgentRunDeps {
@@ -24,6 +37,7 @@ export interface AgentRunDeps {
   memory: MemoryStore;
   skills: SkillRegistry;
   tools: ToolRegistry;
+  transcript: TranscriptStore;
 }
 
 export interface AgentRunInput {
@@ -98,11 +112,14 @@ export interface AgentRunResult {
 /**
  * Bounds the tool loop.
  *
- * A model that keeps calling tools has to terminate somewhere, and every
- * iteration is a paid round trip. Eight is enough for a genuinely multi-step
- * task and cheap enough that a stuck agent is not an expensive one.
+ * A model that keeps calling tools has to terminate somewhere. Eight was sized
+ * for a loop that started from nothing each iteration, where going round again
+ * meant re-deriving the plan and was worth being stingy about. The model now
+ * keeps its own reasoning between iterations, so an iteration is a cheap
+ * continuation of one train of thought rather than a fresh start -- and cutting
+ * a genuinely multi-step task off at eight costs more than letting it run.
  */
-const MAX_ITERATIONS = 8;
+const MAX_ITERATIONS = 20;
 
 /**
  * Reasoning tokens count against this. xhigh on a hard step can spend 10-20k
@@ -129,12 +146,36 @@ export async function runAgentTurn(
   deps: AgentRunDeps,
   input: AgentRunInput,
 ): Promise<AgentRunResult> {
-  const { llm, memory, skills, tools } = deps;
+  const { llm, memory, skills, tools, transcript } = deps;
 
-  const [recalled, availableSkills] = await Promise.all([
-    memory.recall(input.agentId),
+  /*
+   * One id for everything this turn produces.
+   *
+   * The transcript is a flat list of items, and without this there is no way
+   * back from a stored tool result to the question that caused it -- which is
+   * what a transcript view, and compaction, both need.
+   */
+  const turnId = randomUUID();
+
+  const [history, availableSkills] = await Promise.all([
+    transcript.load(input.agentId),
     skills.list(input.agentId),
   ]);
+
+  const userItem: Extract<TranscriptPayload, { kind: 'user' }> = {
+    kind: 'user',
+    content: input.message,
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+  };
+
+  /*
+   * Stored before the model is called, not with the rest of the turn.
+   *
+   * A turn that dies mid-loop has still been asked a question, and the student
+   * can see their own message on the screen. Writing it now is what makes the
+   * next turn's replay match what they are looking at.
+   */
+  await transcript.append([{ agentId: input.agentId, turnId, payload: userItem }]);
 
   const messages: ChatMessage[] = [
     // Static for the whole conversation, so it caches. Anything that changes
@@ -143,12 +184,10 @@ export async function runAgentTurn(
       role: 'system',
       content: buildSystemPrompt(input.purpose, availableSkills, input.about, Boolean(input.vault)),
     },
+    ...renderTranscript(history),
     {
       role: 'user',
-      content: buildUserMessage(
-        buildTurnContext(recalled, input.timezone, input.attachments),
-        input.message,
-      ),
+      content: buildUserMessage(buildTurnContext(input.timezone), renderUserItem(userItem)),
     },
   ];
 
@@ -175,6 +214,18 @@ export async function runAgentTurn(
   const situation = { hasVault: Boolean(input.vault) };
   let reply = '';
 
+  /*
+   * Everything this turn produced, written in one batch at the end.
+   *
+   * Held rather than appended as it happens so a turn that throws mid-loop
+   * leaves the transcript with the student's question and nothing else. A
+   * half-written turn -- a tool call with no result under it -- would be
+   * replayed as fact on every turn after it, and providers reject a call whose
+   * result never arrived.
+   */
+  const pending: AppendTranscriptInput[] = [];
+  let last: ChatResponse | undefined;
+
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
     input.onActivity?.({ kind: 'thinking' });
     const response = await llm.chat(
@@ -189,6 +240,7 @@ export async function runAgentTurn(
 
     if (response.toolCalls.length === 0) {
       reply = text(response.content);
+      last = response;
       break;
     }
 
@@ -199,6 +251,23 @@ export async function runAgentTurn(
       content: response.content,
       toolCalls: response.toolCalls,
       ...(response.payload ? { payload: response.payload } : {}),
+    });
+    pending.push({
+      agentId: input.agentId,
+      turnId,
+      payload: {
+        kind: 'assistant',
+        content: text(response.content),
+        toolCalls: response.toolCalls,
+        ...(response.reasoningSummary ? { reasoningSummary: response.reasoningSummary } : {}),
+        usage: {
+          inputTokens: response.usage.inputTokens,
+          cachedInputTokens: response.usage.cachedInputTokens,
+        },
+      },
+      // Its own reasoning, verbatim, so the next turn continues this train of
+      // thought rather than re-deriving it from the text it happened to write.
+      ...(response.payload ? { providerPayload: response.payload } : {}),
     });
 
     for (const call of response.toolCalls) {
@@ -215,13 +284,38 @@ export async function runAgentTurn(
       } else {
         input.onActivity?.({ kind: 'tool', name: call.name });
       }
-      const result = await tools.execute(call.name, call.arguments, toolContext);
-      messages.push({
-        role: 'tool',
-        toolCallId: call.id,
-        content: JSON.stringify(result),
-      });
     }
+
+    /*
+     * All of them at once.
+     *
+     * A model that asks for three tools in one response has decided they do
+     * not depend on each other, and running them one after another makes the
+     * student wait for the sum of three network calls to get one answer. Every
+     * step is reported before any of them runs, so the line under the question
+     * still names the work in the order it was asked for.
+     */
+    const results = await Promise.all(
+      response.toolCalls.map((call) => tools.execute(call.name, call.arguments, toolContext)),
+    );
+
+    response.toolCalls.forEach((call, index) => {
+      // Capped before it is sent or stored: one runaway page must not eat the
+      // context window, and it would be replayed on every turn after this one.
+      const { text: content, truncated } = truncateToolResult(JSON.stringify(results[index]));
+      messages.push({ role: 'tool', toolCallId: call.id, content });
+      pending.push({
+        agentId: input.agentId,
+        turnId,
+        payload: {
+          kind: 'tool_result',
+          toolCallId: call.id,
+          toolName: call.name,
+          content,
+          ...(truncated ? { truncated } : {}),
+        },
+      });
+    });
   }
 
   // The loop ran out of iterations while still calling tools. Rather than
@@ -234,6 +328,7 @@ export async function runAgentTurn(
       { userId: input.userId, agentId: input.agentId, signal: input.signal },
     );
     reply = text(final.content);
+    last = final;
   }
 
   /*
@@ -256,16 +351,48 @@ export async function runAgentTurn(
   }
 
   /*
-   * Record the exchange verbatim.
+   * The whole turn, in one write.
+   *
+   * Last, and once: until this lands the transcript holds the student's
+   * question and nothing else, which is the only state a failed turn can
+   * safely leave behind. The reply is stored even when it is the fallback
+   * string, because the model must see what the student was told.
+   */
+  pending.push({
+    agentId: input.agentId,
+    turnId,
+    payload: {
+      kind: 'assistant',
+      content: reply,
+      // What the request that produced this reply actually cost, which is what
+      // the compaction estimate anchors on rather than re-counting characters.
+      ...(last
+        ? {
+            usage: {
+              inputTokens: last.usage.inputTokens,
+              cachedInputTokens: last.usage.cachedInputTokens,
+            },
+          }
+        : {}),
+    },
+    ...(last?.payload ? { providerPayload: last.payload } : {}),
+  });
+  await transcript.append(pending);
+
+  /*
+   * Record the exchange verbatim, beside the transcript rather than instead of
+   * it.
+   *
+   * This is no longer what the model reads -- the transcript is -- but two
+   * other things still live off it: the worker's job that writes the student's
+   * chats page, and memory_search, which is how a turn reaches what compaction
+   * has since summarised away.
    *
    * The instinct to filter here -- only remember "important" turns -- is worth
    * resisting. Curation is what the summarisation job is for, and it can judge
    * significance with the whole period in view, which a single turn cannot.
    * Filtering at write time throws away context before anything has had the
    * chance to decide it mattered, and the loss is silent and unrecoverable.
-   *
-   * Cost is bounded on the read side, not the write side: recall() takes the
-   * most recent N entries and the summaries, never the whole log.
    */
   await memory.record({
     agentId: input.agentId,
@@ -404,79 +531,35 @@ export function buildSystemPrompt(
 }
 
 /**
- * Everything that changes between turns, kept out of the system prompt.
+ * What is true only right now, and is never stored.
  *
- * This lives apart from buildSystemPrompt for one measured reason. On the
+ * Everything else the model needs is either in the system prompt or in the
+ * transcript. This block is what neither can hold: the clock. It rides in
+ * front of the student's message and is thrown away with the turn, because a
+ * time replayed a week later is not merely stale, it is wrong -- which is why
+ * the stored user item is the student's words alone.
+ *
+ * It lives apart from buildSystemPrompt for one measured reason. On the
  * Responses API the system prompt is cached as a whole blob keyed on its exact
  * text, not as a prefix: appending six tokens to a 3,613-token prompt took
  * `cached_tokens` from 3,610 to zero. The message list, by contrast, does
- * prefix-match. So a clock that ticks every minute and a memory block that
- * changes every turn do not merely strand the sections below them -- while
- * they sit in the system prompt, nothing in it caches, ever.
- *
- * Moving them into the turn's own message makes the system prompt
- * byte-identical from one turn to the next, which is the only condition under
- * which any of it caches at all. See src/evals/cache.ts for the measurement,
- * and the probe that established the blob behaviour.
+ * prefix-match. So a clock that ticks every minute does not merely strand the
+ * sections below it -- while it sits in the system prompt, nothing in it
+ * caches, ever. See src/evals/cache.ts for the measurement.
  *
  * The block is labelled because it rides along with the student's message and
  * must not be read as something the student typed.
  */
-export function buildTurnContext(
-  recalled: Awaited<ReturnType<MemoryStore['recall']>>,
-  timezone: string | undefined,
-  /**
-   * Files the student attached to this message, already read.
+export function buildTurnContext(timezone: string | undefined): string {
+  /*
+   * Temporal grounding.
    *
-   * Carried here rather than left in the vault to be searched for. The vault
-   * copy is what makes a file findable next month; this is what makes it
-   * readable now -- a student who attaches a photograph and asks "what is
-   * this" has given the agent nothing to search with, and an agent that
-   * answers "I cannot see images" while holding the transcription of one is
-   * the whole feature failing at the last step.
+   * A model has no clock and no location. Without this it cannot resolve
+   * "tomorrow", "this week", or "3pm" into the dates its tools and the
+   * student's coursework use -- so it asks the student what timezone they
+   * are in, every time, which reads as the agent being broken.
    */
-  attachments?: { name: string; body: string }[],
-): string {
-  const sections = [
-    /*
-     * What they attached, first.
-     *
-     * Ahead of the clock and the memory because it is the subject of the
-     * question rather than background to it -- and because a model that has
-     * read this far already has what it needs to answer.
-     */
-    ...(attachments && attachments.length > 0
-      ? [
-          'Files the student attached to this message. They are in the vault ' +
-            'under these names, and this is what they contain:\n\n' +
-            attachments.map((file) => `## ${file.name}\n${file.body}`).join('\n\n'),
-        ]
-      : []),
-    /*
-     * Temporal grounding.
-     *
-     * A model has no clock and no location. Without this it cannot resolve
-     * "tomorrow", "this week", or "3pm" into the dates its tools and the
-     * student's coursework use -- so it asks the student what timezone they
-     * are in, every time, which reads as the agent being broken.
-     */
-    currentTimeSection(timezone),
-  ];
-
-  if (recalled.summaries.length > 0) {
-    sections.push(
-      'What you remember from earlier:\n' +
-        recalled.summaries.map((s) => `- ${s.summary}`).join('\n'),
-    );
-  }
-
-  if (recalled.recent.length > 0) {
-    sections.push(
-      'Recently:\n' + recalled.recent.map((m) => `- [${m.kind}] ${m.content}`).join('\n'),
-    );
-  }
-
-  return sections.join('\n\n');
+  return currentTimeSection(timezone);
 }
 
 /**

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
 import { runAgentTurn } from '../run.js';
 import type { AgentRunDeps } from '../run.js';
+import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
 import { queryTerms, rankByTermMatches } from '../memory/search.js';
 import type { EpisodicMemory, MemoryStore } from '../memory/types.js';
 import { buildToolRegistry } from '../tools/builtin.js';
@@ -241,6 +242,7 @@ async function runCase(apiKey: string, testCase: Case): Promise<Outcome> {
       skills: { list: async () => [] },
       // The real registry, so this measures the tools an agent actually has.
       tools: buildToolRegistry(null, []),
+      transcript: new InMemoryTranscriptStore(),
     } as unknown as AgentRunDeps;
 
     const { reply } = await runAgentTurn(deps, {

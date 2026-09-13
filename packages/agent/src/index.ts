@@ -204,6 +204,13 @@ export {
 export type { IntegrationKey } from './tools/builtin.js';
 export * from './tools/google/scopes.js';
 
+export * from './transcript/types.js';
+export { PostgresTranscriptStore } from './transcript/store.js';
+export { InMemoryTranscriptStore } from './transcript/in-memory.js';
+export { bootstrapItems, BOOTSTRAP_MESSAGE_LIMIT } from './transcript/bootstrap.js';
+export { renderTranscript, renderUserItem, estimateTranscriptTokens } from './transcript/render.js';
+export { truncateToolResult } from './transcript/truncate.js';
+
 export {
   runAgentTurn,
   currentTimeSection,
