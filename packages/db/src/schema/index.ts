@@ -8,3 +8,4 @@ export * from './channels.js';
 export * from './integrations.js';
 export * from './devices.js';
 export * from './vault-sync.js';
+export * from './transcript.js';
