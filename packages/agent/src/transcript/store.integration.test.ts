@@ -101,4 +101,10 @@ describe('PostgresTranscriptStore', () => {
     await db.delete(agents).where(eq(agents.id, agentId));
     expect(await store.count(agentId)).toBe(0);
   });
+
+  it('appending nothing stores nothing and returns an empty list', async () => {
+    await store.append([{ agentId, turnId: randomUUID(), payload: userContent('one') }]);
+    expect(await store.append([])).toEqual([]);
+    expect(await store.count(agentId)).toBe(1);
+  });
 });

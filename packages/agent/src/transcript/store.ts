@@ -58,6 +58,9 @@ export class PostgresTranscriptStore implements TranscriptStore {
   }
 
   async append(items: AppendTranscriptInput[]): Promise<TranscriptItem[]> {
+    // drizzle's insert builder rejects values([]); nothing to store either way.
+    if (items.length === 0) return [];
+
     const rows = await this.db.transaction((tx) =>
       tx
         .insert(agentTranscriptItems)

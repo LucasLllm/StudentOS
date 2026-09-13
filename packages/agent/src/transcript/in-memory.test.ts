@@ -49,4 +49,11 @@ describe('InMemoryTranscriptStore', () => {
     ]);
     expect(item!.tokenEstimate).toBeGreaterThanOrEqual(100);
   });
+
+  it('appending nothing stores nothing and returns an empty list', async () => {
+    const store = new InMemoryTranscriptStore();
+    await store.append([{ agentId: 'a', turnId: 't', payload: user('one') }]);
+    expect(await store.append([])).toEqual([]);
+    expect(await store.count('a')).toBe(1);
+  });
 });
