@@ -113,4 +113,19 @@ describe('naming a conversation', () => {
     await nameConversation(recording as never, { question: 'x'.repeat(9000), userId: 'u1' });
     expect(sent.length).toBeLessThan(3000);
   });
+
+  it('asks for low effort under a small token cap', async () => {
+    let sent: unknown;
+    const recording = {
+      llm: {
+        chat: async (request: unknown) => {
+          sent = request;
+          return { content: 'Potato recipes', toolCalls: [], usage: {}, finishReason: 'stop' };
+        },
+      },
+    };
+
+    await nameConversation(recording as never, { question: 'potatoes', userId: 'u1' });
+    expect(sent).toMatchObject({ effort: 'low', maxOutputTokens: 200 });
+  });
 });

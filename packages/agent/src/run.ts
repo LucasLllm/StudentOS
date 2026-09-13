@@ -105,6 +105,13 @@ export interface AgentRunResult {
 const MAX_ITERATIONS = 8;
 
 /**
+ * Reasoning tokens count against this. xhigh on a hard step can spend 10-20k
+ * before a word of the answer; Luna allows 128k. Below this the answer is cut
+ * mid-thought and comes back as status 'incomplete' with no text.
+ */
+export const AGENT_MAX_OUTPUT_TOKENS = 32_000;
+
+/**
  * The model's text, as a string, whatever it actually sent.
  *
  * A response carrying no text has no text field -- the OpenAI adapter passes
@@ -171,7 +178,12 @@ export async function runAgentTurn(
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
     input.onActivity?.({ kind: 'thinking' });
     const response = await llm.chat(
-      { messages, tools: toolDefinitions },
+      {
+        messages,
+        tools: toolDefinitions,
+        effort: 'xhigh',
+        maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
+      },
       { userId: input.userId, agentId: input.agentId, signal: input.signal },
     );
 
@@ -186,6 +198,7 @@ export async function runAgentTurn(
       role: 'assistant',
       content: response.content,
       toolCalls: response.toolCalls,
+      ...(response.payload ? { payload: response.payload } : {}),
     });
 
     for (const call of response.toolCalls) {
@@ -217,7 +230,7 @@ export async function runAgentTurn(
   // getting a partial answer beats a student getting silence.
   if (!reply.trim()) {
     const final = await llm.chat(
-      { messages },
+      { messages, effort: 'xhigh', maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS },
       { userId: input.userId, agentId: input.agentId, signal: input.signal },
     );
     reply = text(final.content);

@@ -94,6 +94,10 @@ export async function nameConversation(
           { role: 'system', content: 'You write short, plain titles. You never explain.' },
           { role: 'user', content: `${PROMPT}\n\n---\n${asked.slice(0, 2000)}` },
         ],
+        // A title is five words. Reasoning tokens count against the cap, so
+        // low rather than none -- the cap must never be the reason this fails.
+        effort: 'low',
+        maxOutputTokens: 200,
       },
       { userId },
     );

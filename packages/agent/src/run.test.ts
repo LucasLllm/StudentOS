@@ -7,6 +7,8 @@ import { loadSkill } from './tools/skills.js';
 import type { ToolContext } from './tools/types.js';
 import type { AgentRunDeps } from './run.js';
 
+const usage = { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 };
+
 /**
  * Temporal grounding.
  *
@@ -699,5 +701,60 @@ describe('the assembled system prompt', () => {
 
   it('tells the model to load the browser skill before touching a site', () => {
     expect(buildSystemPrompt('help', [])).toMatch(/load the browser skill/i);
+  });
+});
+
+describe('what the model is asked for', () => {
+  it('runs the turn at xhigh with a hard output cap', async () => {
+    const seen: unknown[] = [];
+    const deps = {
+      llm: {
+        chat: async (request: unknown) => {
+          seen.push(request);
+          return { content: 'ok', toolCalls: [], usage, finishReason: 'stop' as const };
+        },
+      },
+      memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+      skills: { list: async () => [] },
+      tools: new ToolRegistry(),
+    } as unknown as AgentRunDeps;
+    await runAgentTurn(deps, { userId: 'u1', agentId: 'a1', purpose: '', message: 'hi' } as never);
+    expect(seen[0]).toMatchObject({ effort: 'xhigh', maxOutputTokens: 32_000 });
+  });
+
+  it('gives the model its own reasoning back on the next step of a turn', async () => {
+    const payload = { format: 'openai_responses' as const, items: [{ type: 'reasoning' }] };
+    const requests: { messages: { role: string; payload?: unknown }[] }[] = [];
+    let turn = 0;
+    const tools = new ToolRegistry();
+    tools.register({
+      id: 'probe',
+      description: 'x',
+      inputSchema: z.object({}),
+      execute: async () => 'ok',
+    } as never);
+    const deps = {
+      llm: {
+        chat: async (request: { messages: { role: string; payload?: unknown }[] }) => {
+          requests.push(request);
+          turn += 1;
+          return turn === 1
+            ? {
+                content: '',
+                toolCalls: [{ id: 'c1', name: 'probe', arguments: '{}' }],
+                payload,
+                usage,
+                finishReason: 'tool_calls' as const,
+              }
+            : { content: 'done', toolCalls: [], usage, finishReason: 'stop' as const };
+        },
+      },
+      memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+      skills: { list: async () => [] },
+      tools,
+    } as unknown as AgentRunDeps;
+    await runAgentTurn(deps, { userId: 'u1', agentId: 'a1', purpose: '', message: 'go' } as never);
+    const assistant = requests[1]?.messages.find((m) => m.role === 'assistant');
+    expect(assistant?.payload).toEqual(payload);
   });
 });
