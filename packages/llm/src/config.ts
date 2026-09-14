@@ -46,15 +46,19 @@ export const PLATFORM_PRICING = {
 } as const;
 
 /**
- * Default allowance for a student on the platform tier.
+ * Default allowance for a student on the platform tier, in cost-equivalent
+ * full-price input tokens -- see `costEquivalentTokens` in quota.ts. 5M of
+ * them is $1.00/month at $0.20 per million.
  *
- * Rough sizing: ~3k input + 500 output per agent turn, so 2M tokens is on the
- * order of 500 turns a month -- generous for a normal student, and a ceiling
- * that costs us well under a dollar if someone leans on it.
+ * Estimated sizing, not measured: at roughly $0.002 per turn (a cached
+ * transcript plus an xhigh-reasoning reply), ~500 typical turns a month
+ * should still fit. Re-check against production `llm_usage` averages
+ * (`select avg(cost_micro_usd) from llm_usage where provider = 'platform'`)
+ * before changing this again.
  *
  * Students on their own API key are not metered against this at all.
  */
-export const DEFAULT_MONTHLY_TOKEN_QUOTA = 2_000_000;
+export const DEFAULT_MONTHLY_TOKEN_QUOTA = 5_000_000;
 
 /**
  * Upgrade path, for when a school is paying:

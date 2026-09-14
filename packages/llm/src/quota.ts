@@ -86,11 +86,20 @@ export class QuotaService {
     return this.tokensUsedSince(userId, currentWindowStart());
   }
 
-  /** Platform tokens spent by this student since a moment. */
+  /**
+   * Platform cost spent by this student since a moment, expressed as
+   * cost-equivalent tokens.
+   *
+   * The quota exists to bound what a student costs, not how many tokens they
+   * touched. Summing raw input + output tokens made a long cached chat look
+   * ten times dearer than it actually was, and made a reasoning-heavy reply
+   * -- billed at six times the input rate -- look six times cheaper. Summing
+   * `cost_micro_usd` and converting back through the input price fixes both.
+   */
   async tokensUsedSince(userId: string, since: Date): Promise<number> {
     const [row] = await this.db
       .select({
-        total: sql<number>`coalesce(sum(${llmUsage.inputTokens} + ${llmUsage.outputTokens}), 0)`,
+        total: sql<number>`coalesce(sum(${llmUsage.costMicroUsd}), 0)`,
       })
       .from(llmUsage)
       .where(
@@ -101,7 +110,7 @@ export class QuotaService {
         ),
       );
 
-    return Number(row?.total ?? 0);
+    return costEquivalentTokens(Number(row?.total ?? 0));
   }
 
   /** Where the student stands against both limits, for the usage screen. */
@@ -235,4 +244,15 @@ export function platformCostMicroUsd(usage: TokenUsage): number {
       usage.cachedInputTokens * PLATFORM_PRICING.cachedInputMicroUsdPerToken +
       usage.outputTokens * PLATFORM_PRICING.outputMicroUsdPerToken,
   );
+}
+
+/**
+ * A cost, expressed as the number of full-price input tokens it is worth.
+ *
+ * The quota's unit is cost, but a raw micro-USD figure means nothing to a
+ * student or on a usage bar -- converting back through the input price gives
+ * a number that reads like a token count while actually tracking spend.
+ */
+export function costEquivalentTokens(costMicroUsd: number): number {
+  return Math.round(costMicroUsd / PLATFORM_PRICING.inputMicroUsdPerToken);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { QuotaService, SESSION_WINDOW_MS, currentWeekEnd, currentWeekStart } from './quota.js';
 import { currentWindowEnd, currentWindowStart, platformCostMicroUsd } from './quota.js';
+import { costEquivalentTokens } from './quota.js';
 import { PLATFORM_PRICING } from './config.js';
 
 describe('platformCostMicroUsd', () => {
@@ -65,6 +66,22 @@ describe('platformCostMicroUsd', () => {
       cachedInputTokens: 11,
     });
     expect(Number.isInteger(cost)).toBe(true);
+  });
+});
+
+describe('costEquivalentTokens', () => {
+  it('counts a cached token at a tenth and an output token at six', () => {
+    const usage = { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 900 };
+    // 100 * 0.2 + 900 * 0.02 + 100 * 1.2 = 158 micro-USD = 790 full-price input tokens
+    expect(costEquivalentTokens(platformCostMicroUsd(usage))).toBe(790);
+  });
+
+  it('is the identity for uncached input', () => {
+    expect(
+      costEquivalentTokens(
+        platformCostMicroUsd({ inputTokens: 500, outputTokens: 0, cachedInputTokens: 0 }),
+      ),
+    ).toBe(500);
   });
 });
 
