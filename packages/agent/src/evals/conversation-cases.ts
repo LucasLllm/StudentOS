@@ -65,6 +65,11 @@ export const CONVERSATION_CASES: ConversationCase[] = [
    * because how far it got depends on how it chose to work -- and must not
    * open by answering the distraction again, which is what losing the thread
    * looks like.
+   *
+   * Turn one supplies the essay question, word count, and deadline: an
+   * outline needs a question to outline, and a brief that never gives one
+   * makes the pending step unreachable -- the agent correctly asks for it
+   * instead of guessing, and can never get to draft, intro, or source.
    */
   {
     id: 'goal-essay',
@@ -72,8 +77,10 @@ export const CONVERSATION_CASES: ConversationCase[] = [
     turns: [
       {
         say:
-          'help me get my history essay on the Cold War done: first an outline, ' +
-          'then a draft intro, then a source list',
+          "help me get my history essay done. The question is 'To what extent was the " +
+          "Cold War inevitable after 1945?', 1500 words, due next Friday. Do it in three " +
+          'steps: first an outline, then a draft intro, then a source list. Start with ' +
+          'the outline now.',
       },
       ...distractions(3),
       { say: "actually wait, what's the capital of Peru" },
