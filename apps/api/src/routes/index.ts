@@ -283,7 +283,7 @@ export function createRoutes(ctx: AppContext) {
 
         /*
          * An exempt account reports no quota, the same shape as a student on
-         * their own key. Showing "2,090,200 / 2,000,000 used" to someone the
+         * their own key. Showing "5,120,000 / 5,000,000 used" to someone the
          * limit does not apply to would read as a problem to fix.
          */
         if (await ctx.quota.isExempt(userId)) {
