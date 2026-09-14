@@ -15,7 +15,7 @@ import type { MemoryCase } from './memory-grader.js';
  */
 
 /** Twelve exchanges of ordinary noise, enough to push anything before it out. */
-const FILLER: string[] = [
+export const FILLER: string[] = [
   'Student: whats the weather like tomorrow\nAgent: Rain in the morning, clearing by lunch.',
   'Student: how many sig figs in 0.00450\nAgent: Three. The leading zeros do not count.',
   'Student: can you convert 5 miles to km\nAgent: About 8 km.',

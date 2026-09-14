@@ -49,7 +49,7 @@ export interface Grade {
  * a typographic one. Normalising once here is the only place that can go
  * wrong, rather than every pattern having to remember.
  */
-function normalise(text: string): string {
+export function normalise(text: string): string {
   return text
     .replace(/[\u2018\u2019\u02bc]/g, "'")
     .replace(/[\u201c\u201d]/g, '"')
@@ -57,7 +57,7 @@ function normalise(text: string): string {
 }
 
 /** Escape a term so it can go inside a word-boundary match. */
-function term(text: string): RegExp {
+export function term(text: string): RegExp {
   return new RegExp(`\\b${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
 }
 
@@ -99,7 +99,7 @@ const ADMITS_NOT_KNOWING = [
  * still confabulation -- the student acts on the name. An honest "I don't
  * know" leads with it.
  */
-function opening(reply: string): string {
+export function opening(reply: string): string {
   const [first] = reply.trim().split(/[,.;:!?]|\s--?\s|\n/);
   return first ?? '';
 }
