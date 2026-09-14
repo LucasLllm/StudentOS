@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import { buildSystemPrompt, currentTimeSection, runAgentTurn } from './run.js';
-import { COMPACTION, RESPONDING, VAULT_READING } from './prompts/documents.js';
+import { COMPACTION, RESPONDING, VAULT_READING, WORKING } from './prompts/documents.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadSkill } from './tools/skills.js';
 import { InMemoryTranscriptStore } from './transcript/in-memory.js';
@@ -711,6 +711,13 @@ describe('the assembled system prompt', () => {
     const prompt = buildSystemPrompt('keep me on top of chemistry', [], '# Lucas', true);
     expect(prompt.indexOf('Skills:')).toBeLessThan(prompt.indexOf('Your purpose'));
     expect(prompt.indexOf('Skills:')).toBeLessThan(prompt.indexOf('# Lucas'));
+  });
+
+  it('carries the working document above the per-agent tier', () => {
+    const prompt = buildSystemPrompt('keep me on top of chemistry', [], '# Lucas', true);
+    expect(prompt).toContain(WORKING.body);
+    expect(prompt.indexOf(WORKING.body)).toBeLessThan(prompt.indexOf('Your purpose'));
+    expect(prompt.indexOf(WORKING.body)).toBeLessThan(prompt.indexOf('# Lucas'));
   });
 
   it('tells the model to load the browser skill before touching a site', () => {

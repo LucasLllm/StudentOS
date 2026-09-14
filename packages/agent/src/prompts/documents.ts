@@ -115,6 +115,17 @@ export function loadPromptDocument(name: string, dir = DOCUMENTS_DIR): PromptDoc
 export const RESPONDING = loadPromptDocument('responding');
 
 /**
+ * How to work through a task that takes more than one step.
+ *
+ * Always loaded, on every turn: keep going rather than stop at a partial
+ * answer, ask at most one question and only when the answer genuinely needs
+ * it, look things up in proportion to the question, keep a plan for
+ * multi-step work, and read a handoff summary or a cleared tool result as
+ * normal rather than a reason to wrap up.
+ */
+export const WORKING = loadPromptDocument('working');
+
+/**
  * How to summarise the older part of a long conversation.
  *
  * Read by the compaction call between turns, never by a turn itself: it

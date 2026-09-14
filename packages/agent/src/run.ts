@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentActivity } from '@contexto/shared';
 import type { ChatMessage, ChatResponse, LlmRegistry } from '@contexto/llm';
-import { RESPONDING } from './prompts/documents.js';
+import { RESPONDING, WORKING } from './prompts/documents.js';
 import { renderPlan } from './plan/render.js';
 import { skillsSection } from './skills/builtin.js';
 import { skillRequested } from './tools/skills.js';
@@ -526,6 +526,12 @@ export function buildSystemPrompt(
       'them, not to their school.',
     /* How to talk to them. Measured at 15% -> 100% clean replies; see src/evals. */
     RESPONDING.body,
+    /*
+     * How to work through a task, on every turn: keep going, ask at most one
+     * question, look things up in proportion, keep a plan for multi-step
+     * work, and read a handoff summary or a cleared tool result as normal.
+     */
+    WORKING.body,
     /*
      * How signing in works here, because the honest default is wrong.
      *

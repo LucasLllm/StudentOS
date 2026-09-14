@@ -126,6 +126,13 @@ describe('the documents that ship', () => {
     expect(COMPACTION.description).not.toBe('');
     expect(COMPACTION.body.length).toBeGreaterThan(500);
   });
+
+  it('loads working.md at import time', async () => {
+    const { WORKING } = await import('./documents.js');
+    expect(WORKING.name).toBe('working');
+    expect(WORKING.description).not.toBe('');
+    expect(WORKING.body.length).toBeGreaterThan(500);
+  });
 });
 
 describe('the documents that are skills', () => {
