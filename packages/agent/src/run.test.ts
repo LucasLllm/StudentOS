@@ -1042,6 +1042,41 @@ describe('the conversation the model sees', () => {
     expect(items[0]?.payload.kind).toBe('user');
   });
 
+  it('clears an earlier tool result behind a watermark once the budget is tight', async () => {
+    // A usage big enough that even one turn's worth of it exceeds the tiny
+    // threshold below -- the point of this test is the wiring, not the size.
+    const bigUsage = { inputTokens: 100, outputTokens: 1, cachedInputTokens: 0 };
+    const requests: Request[] = [];
+    let call = 0;
+    const deps = depsWith(
+      async (request) => {
+        requests.push(request as Request);
+        call += 1;
+        return call === 1
+          ? {
+              content: '',
+              toolCalls: [{ id: 'c1', name: 'probe', arguments: '{}' }],
+              usage: bigUsage,
+              finishReason: 'tool_calls' as const,
+            }
+          : {
+              content: call === 2 ? 'A' : 'B',
+              toolCalls: [],
+              usage: bigUsage,
+              finishReason: 'stop' as const,
+            };
+      },
+      registry('probe', async () => 'ok'),
+    );
+    const contextBudget = { clearToolResultsAboveTokens: 1, keepRecentToolResults: 0 };
+
+    await runAgentTurn(deps, input('first question', { contextBudget }));
+    await runAgentTurn(deps, input('second question', { contextBudget }));
+
+    const replay = requests[2];
+    expect(replay?.messages.find((m) => m.role === 'tool')?.content).toContain('cleared');
+  });
+
   it('stores the files with the message that brought them, and only there', async () => {
     const requests: Request[] = [];
     const deps = depsWith(async (request) => {

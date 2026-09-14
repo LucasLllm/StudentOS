@@ -4,8 +4,10 @@ import type { ChatMessage, ChatResponse, LlmRegistry } from '@contexto/llm';
 import { RESPONDING } from './prompts/documents.js';
 import { skillsSection } from './skills/builtin.js';
 import { skillRequested } from './tools/skills.js';
+import { applyBudget, DEFAULT_CONTEXT_BUDGET } from './transcript/budget.js';
 import { renderTranscript, renderUserItem } from './transcript/render.js';
 import { truncateToolResult } from './transcript/truncate.js';
+import type { ContextBudget } from './transcript/budget.js';
 import type {
   AppendTranscriptInput,
   TranscriptPayload,
@@ -94,6 +96,13 @@ export interface AgentRunInput {
    */
   onActivity?: (activity: AgentActivity) => void;
   signal?: AbortSignal;
+  /**
+   * Overrides DEFAULT_CONTEXT_BUDGET. Production never sets this; the eval
+   * harness does, forcing the thresholds down so a short scripted
+   * conversation can exercise clearing and compaction without needing tens
+   * of thousands of tokens of real transcript first.
+   */
+  contextBudget?: Partial<ContextBudget>;
 }
 
 export interface AgentRunResult {
@@ -157,10 +166,24 @@ export async function runAgentTurn(
    */
   const turnId = randomUUID();
 
-  const [history, availableSkills] = await Promise.all([
+  const [loadedHistory, availableSkills] = await Promise.all([
     transcript.load(input.agentId),
     skills.list(input.agentId),
   ]);
+  let history = loadedHistory;
+
+  const budget: ContextBudget = { ...DEFAULT_CONTEXT_BUDGET, ...input.contextBudget };
+  history = await applyBudget(
+    { llm, transcript },
+    {
+      agentId: input.agentId,
+      userId: input.userId,
+      items: history,
+      budget,
+      ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.onActivity ? { onActivity: input.onActivity } : {}),
+    },
+  );
 
   const userItem: Extract<TranscriptPayload, { kind: 'user' }> = {
     kind: 'user',
