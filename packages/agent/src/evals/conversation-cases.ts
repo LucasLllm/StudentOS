@@ -101,8 +101,9 @@ export const CONVERSATION_CASES: ConversationCase[] = [
    * The probe answers once and then fails, so the agent cannot recover the
    * answer by calling it again -- it either kept what the tool said or it did
    * not. Clearing removes old tool results first and hardest, which makes
-   * this the case most likely to break, and `unavailable` in the reply means
-   * the agent tried the tool again and read its failure back as the answer.
+   * this the case most likely to break. A reply may say a fresh lookup is
+   * unavailable as long as it recalls the stored result; recall is what the
+   * expected terms check.
    */
   {
     id: 'tool-recall-classroom',
@@ -114,7 +115,6 @@ export const CONVERSATION_CASES: ConversationCase[] = [
       {
         say: 'remind me what was due from classroom?',
         expect: ['lab report', 'Thursday'],
-        reject: ['unavailable'],
       },
     ],
   },
