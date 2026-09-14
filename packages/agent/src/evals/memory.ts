@@ -240,7 +240,7 @@ async function main(): Promise<void> {
 
   console.log(
     `Model ${PLATFORM_MODEL} | ${MEMORY_CASES.length} cases, each with its fact buried ` +
-      'behind the 8-exchange window\n',
+      'behind twelve exchanges of school chatter\n',
   );
 
   const results = await pooled(MEMORY_CASES, 4, (c) => runCase(apiKey, c));

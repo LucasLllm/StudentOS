@@ -216,6 +216,14 @@ interface Outcome {
   cacheRatio: number;
   lengthFinishes: number;
   reasoningTurns: number;
+  /**
+   * What the agent actually said on a turn it failed.
+   *
+   * A run of this eval costs real money and twenty minutes, so a table row
+   * saying only which words were missing sends the next person back to the
+   * model to find out why. The reply itself is the evidence.
+   */
+  failedReplies: string[];
 }
 
 async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Promise<Outcome> {
@@ -280,6 +288,7 @@ async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Pro
   const agentId = `${testCase.id}-${arm}`;
   const stats: TurnStat[] = [];
   const failures: string[] = [];
+  const failedReplies: string[] = [];
 
   for (const turn of testCase.turns) {
     const before = calls.length;
@@ -303,7 +312,10 @@ async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Pro
 
     if (turn.expect ?? turn.expectAny ?? turn.reject) {
       const grade = gradeTurn(turn, reply);
-      if (!grade.passed) failures.push(grade.why);
+      if (!grade.passed) {
+        failures.push(grade.why);
+        failedReplies.push(`"${turn.say}" -> ${reply.replace(/\s+/g, ' ').trim()}`);
+      }
     }
   }
 
@@ -344,6 +356,7 @@ async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Pro
     cacheRatio,
     lengthFinishes: stats.filter((stat) => stat.ranOutOfRoom).length,
     reasoningTurns: stats.filter((stat) => stat.replayedReasoning).length,
+    failedReplies,
   };
 }
 
@@ -408,6 +421,11 @@ async function main(): Promise<void> {
         `${row.reasoningTurns}/${row.testCase.turns.length}`.padEnd(11) +
         row.why,
     );
+  }
+
+  for (const row of results.filter((r) => r.failedReplies.length > 0)) {
+    console.log(`\n${row.testCase.id} ${row.arm}:`);
+    for (const said of row.failedReplies) console.log(`  ${said}`);
   }
 
   const categories: ConversationCategory[] = ['needle', 'goal', 'tool-recall'];
