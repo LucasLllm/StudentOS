@@ -119,6 +119,13 @@ describe('the documents that ship', () => {
     // tokens on every turn and tells the model nothing it needs.
     expect(RESPONDING.body).not.toContain(RESPONDING.description);
   });
+
+  it('loads compaction.md at import time', async () => {
+    const { COMPACTION } = await import('./documents.js');
+    expect(COMPACTION.name).toBe('compaction');
+    expect(COMPACTION.description).not.toBe('');
+    expect(COMPACTION.body.length).toBeGreaterThan(500);
+  });
 });
 
 describe('the documents that are skills', () => {

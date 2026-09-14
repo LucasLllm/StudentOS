@@ -115,6 +115,15 @@ export function loadPromptDocument(name: string, dir = DOCUMENTS_DIR): PromptDoc
 export const RESPONDING = loadPromptDocument('responding');
 
 /**
+ * How to summarise the older part of a long conversation.
+ *
+ * Read by the compaction call between turns, never by a turn itself: it
+ * describes what that call should write about a stretch of conversation a
+ * later turn will no longer see.
+ */
+export const COMPACTION = loadPromptDocument('compaction');
+
+/**
  * What an episode is, when to make one, and how to link it.
  *
  * Loaded by every pass that writes into ContextoVault -- mail import,
