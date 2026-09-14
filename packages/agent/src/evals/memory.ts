@@ -9,6 +9,7 @@ import type { AgentRunDeps } from '../run.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { searchMemory } from '../tools/memory.js';
 import { InMemoryTranscriptStore } from '../transcript/in-memory.js';
+import type { ContextBudget } from '../transcript/budget.js';
 import { tmpdir } from 'node:os';
 import { collectExchanges } from '../memory/summarize.js';
 import { updateChatsDoc } from '../vault/chats-doc.js';
@@ -21,7 +22,7 @@ import { MEMORY_CASES } from './memory-cases.js';
 import { gradeReply, type MemoryCase, type MemoryCategory } from './memory-grader.js';
 
 /**
- * Can the agent remember anything the recency window has dropped?
+ * Can the agent remember anything that is no longer sitting in the prompt?
  *
  *   pnpm --filter @contexto/agent eval:memory
  *
@@ -30,9 +31,25 @@ import { gradeReply, type MemoryCase, type MemoryCategory } from './memory-grade
  * reaches for its history at all. Calling the model directly would test
  * whether it can read a transcript, which is not the question.
  *
- * Every case buries its fact behind twelve exchanges of ordinary school
- * chatter, so nothing here is answerable from the eight-exchange window. What
- * the score measures is the archival tier doing its job.
+ * A turn now replays the whole seeded transcript (deps.transcript), so the
+ * twelve exchanges of ordinary school chatter each case buries its fact
+ * behind no longer fall outside any window -- they are all still in context,
+ * verbatim. Three arms:
+ *
+ *   - search only: the plain transcript, no profile. With everything still
+ *     verbatim in context this mostly checks the agent does not need to
+ *     search at all; memory_search stays available for facts the transcript
+ *     alone does not carry (an earlier session, an update, an abstention).
+ *   - + profile: the same transcript, plus a profile the vault's real writer
+ *     produced from the same history. Measures whether a bounded always-on
+ *     document beats searching for everything.
+ *   - compacted: the same cases run with a budget tiny enough
+ *     (compactAboveTokens: 1) that compaction fires on turn one, collapsing
+ *     everything but the last two user turns into a handoff summary. This is
+ *     what puts a fact out of reach again, so it is the arm that measures
+ *     what the original recency-window version of this eval measured: does
+ *     the agent recognise the handoff summary is incomplete and reach for
+ *     memory_search to recover the fact behind it.
  */
 
 /** Mirrors apps/api/src/env.ts -- walk up for .env rather than trusting cwd. */
@@ -158,7 +175,12 @@ interface Outcome {
   queries: { q: string; hits: number }[];
 }
 
-async function runCase(apiKey: string, testCase: MemoryCase, profile?: string): Promise<Outcome> {
+async function runCase(
+  apiKey: string,
+  testCase: MemoryCase,
+  profile?: string,
+  contextBudget?: Partial<ContextBudget>,
+): Promise<Outcome> {
   const provider = new OpenAiProvider({ apiKey, model: PLATFORM_MODEL });
   const tools = new ToolRegistry();
   tools.register(searchMemory as never);
@@ -181,6 +203,7 @@ async function runCase(apiKey: string, testCase: MemoryCase, profile?: string): 
     message: testCase.question,
     timezone: 'Europe/London',
     ...(profile ? { about: profile } : {}),
+    ...(contextBudget ? { contextBudget } : {}),
     onActivity: (a: AgentActivity) => {
       if (a.kind === 'tool' && a.name) used.push(a.name);
     },
@@ -233,6 +256,16 @@ async function main(): Promise<void> {
     ({ c, profile }) => runCase(apiKey, c, profile),
   );
 
+  // Third arm: the same cases, forced through compaction (compactAboveTokens: 1
+  // guarantees it fires on turn one) so the fact sits behind a handoff summary
+  // instead of a verbatim transcript. This is the arm that answers the
+  // question the eval was originally built for: can the agent recover a fact
+  // that is no longer sitting in context.
+  const COMPACTED_BUDGET: Partial<ContextBudget> = { compactAboveTokens: 1, keepLastUserTurns: 2 };
+  const compacted = await pooled(MEMORY_CASES, 4, (c) =>
+    runCase(apiKey, c, undefined, COMPACTED_BUDGET),
+  );
+
   const categories: MemoryCategory[] = [
     'continuity',
     'extraction',
@@ -248,20 +281,23 @@ async function main(): Promise<void> {
     return `${mine.filter((r) => r.passed).length}/${mine.length}`;
   };
 
-  console.log('CATEGORY          SEARCH ONLY   + PROFILE');
+  console.log('CATEGORY          SEARCH ONLY   + PROFILE   COMPACTED');
   for (const category of categories) {
     if (!results.some((r) => r.testCase.category === category)) continue;
     console.log(
       category.padEnd(17) +
         score(results, category).padStart(11) +
-        score(withProfile, category).padStart(12),
+        score(withProfile, category).padStart(12) +
+        score(compacted, category).padStart(12),
     );
   }
 
   const searchedWith = withProfile.filter((r) => r.searched).length;
+  const searchedCompacted = compacted.filter((r) => r.searched).length;
   console.log(
     `\nreached for memory_search: ${results.filter((r) => r.searched).length}/${results.length}` +
-      ` without a profile, ${searchedWith}/${withProfile.length} with one`,
+      ` without a profile, ${searchedWith}/${withProfile.length} with one, ` +
+      `${searchedCompacted}/${compacted.length} compacted`,
   );
   const avgProfile = Math.round(
     profiles.reduce((n, p) => n + (p?.length ?? 0), 0) / profiles.length,
@@ -270,7 +306,9 @@ async function main(): Promise<void> {
 
   const pct = (rows: Outcome[]) =>
     `${rows.filter((r) => r.passed).length}/${rows.length} (${Math.round((rows.filter((r) => r.passed).length / rows.length) * 100)}%)`;
-  console.log(`\nTOTAL            ${pct(results).padStart(10)}${pct(withProfile).padStart(13)}`);
+  console.log(
+    `\nTOTAL            ${pct(results).padStart(10)}${pct(withProfile).padStart(13)}${pct(compacted).padStart(13)}`,
+  );
 
   const failures = withProfile.filter((r) => !r.passed);
   if (failures.length > 0) {
