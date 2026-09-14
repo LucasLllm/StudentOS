@@ -16,6 +16,10 @@ export {
 export { capProfile, type ProfileStore } from './memory/profile.js';
 export { PostgresProfileStore } from './memory/profile-store.js';
 
+export type { PlanStatus, PlanStep, AgentPlan, PlanStore } from './plan/types.js';
+export { PostgresPlanStore, InMemoryPlanStore } from './plan/store.js';
+export { validatePlan, renderPlan, PLAN_STALE_AFTER_TURNS } from './plan/render.js';
+
 export { UNTRUSTED_RULE, untrustedNote } from './untrusted.js';
 export { Vault, type VaultNote, type NoteKind, type NoteSource } from './vault/vault.js';
 export {

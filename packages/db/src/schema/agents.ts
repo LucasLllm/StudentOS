@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { user } from './auth.js';
 
 /**
@@ -19,11 +19,11 @@ export const agents = pgTable(
     /** Student-authored, in their own words. Feeds the system prompt. */
     purpose: text('purpose').notNull().default(''),
     /**
-     * What the agent has learned about this student, in its own words.
-     *
-     * Rewritten by the summarisation job between conversations and pinned in
-     * the cached part of the system prompt, which is why it is bounded rather
-     * than allowed to grow -- see PROFILE_CHAR_LIMIT in packages/agent.
+     * No longer read by a turn. What a student is like now lives on the vault
+     * page writeUserDoc writes, one per student rather than one per agent --
+     * see the comment on ExchangeCollectorDeps in memory/summarize.ts. This
+     * column and profileUpdatedAt below survive only as ProfileStore's
+     * watermark, gating when that page is due for a rewrite.
      */
     profile: text('profile').notNull().default(''),
     /**
@@ -37,6 +37,19 @@ export const agents = pgTable(
      * after it.
      */
     profileUpdatedAt: timestamp('profile_updated_at', { withTimezone: true }),
+    /**
+     * The student's goal for this conversation, in the model's own words, and
+     * where it is against that goal.
+     *
+     * Nullable: most turns never need one, and it starts out unset rather
+     * than an empty list. updatedAtSeq is the transcript seq of the user item
+     * of the turn that last wrote it, which is what lets a render compute how
+     * many turns have passed since without a separate timestamp.
+     */
+    plan: jsonb('plan').$type<{
+      steps: { step: string; status: string }[];
+      updatedAtSeq: number;
+    }>(),
     /*
      * Out of the rail, still in the vault.
      *
