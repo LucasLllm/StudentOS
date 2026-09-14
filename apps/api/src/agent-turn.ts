@@ -1,9 +1,11 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { asc, eq, sql } from 'drizzle-orm';
 import { agentMessages, agents, user } from '@contexto/db';
 import type { Message, MessageAttachment } from '@contexto/shared';
 import { ContextoError } from '@contexto/shared';
 import {
   Vault,
+  bootstrapItems,
   buildToolRegistry,
   nameConversation,
   listDocuments,
@@ -72,6 +74,30 @@ export async function runTurnForAgent(
     .where(eq(agentMessages.agentId, agent.id));
   const opening = (existing?.count ?? 0) === 0;
 
+  /*
+   * Chats that were had before the transcript table existed start from what
+   * they do have.
+   *
+   * Their words are in agent_messages and nowhere else, so the first turn
+   * after the upgrade seeds the transcript from them rather than meeting a
+   * student it has been talking to all week as a stranger. Only the words:
+   * the tool results and the reasoning that produced them were never stored
+   * and are not coming back. Once, too -- the count is zero exactly until
+   * this has run, and it is read before the question below is inserted so
+   * the seed holds the conversation as it was, without today's message in it
+   * twice.
+   */
+  if (!opening && (await ctx.transcript.count(agent.id)) === 0) {
+    const rows = await ctx.db
+      .select({ role: agentMessages.role, content: agentMessages.content })
+      .from(agentMessages)
+      .where(eq(agentMessages.agentId, agent.id))
+      .orderBy(asc(agentMessages.createdAt));
+    await ctx.transcript.append(
+      bootstrapItems(rows).map((payload) => ({ agentId: agent.id, turnId: randomUUID(), payload })),
+    );
+  }
+
   const [userMessage] = await ctx.db
     .insert(agentMessages)
     .values({ agentId: agent.id, role: 'user', content, attachments: attachments ?? [] })
@@ -127,7 +153,6 @@ export async function runTurnForAgent(
           userId,
           agentId: agent.id,
           purpose: agent.purpose,
-          // What the summarisation job has learned about them, if anything yet.
           /*
            * Their school, in a paragraph, written when the vault was last built.
            *
@@ -139,24 +164,22 @@ export async function runTurnForAgent(
           ...(vault ? { vault } : {}),
           message: content,
           /*
-           * Read now, not searched for later.
+           * This message's files, read now rather than searched for later.
            *
            * The note was written moments ago by the upload the message came
            * with, so this is a read of a file already on disk -- and it is what
            * puts a photograph's transcription in front of the model on the turn
-           * that asked about it.
-           */
-          /*
-           * Everything attached to this conversation, not just to this message.
-           *
-           * A photograph is attached once and asked about for the rest of the
-           * afternoon. Carrying only the current message's files meant the
-           * second question about a worksheet met an agent that had never seen
-           * it -- the transcription was in the vault, and out of reach again.
+           * that asked about it. Only this message's: the transcript carries
+           * every earlier file, in the question it arrived with, so a
+           * photograph asked about all afternoon is read once and replayed
+           * rather than re-read onto every question after it.
            */
           ...(vault
             ? {
-                attachments: await conversationAttachments(ctx, vault, agent.id, attachments ?? []),
+                attachments: await readAttachments(
+                  vault,
+                  (attachments ?? []).map((a) => a.name),
+                ),
               }
             : {}),
           ...(profile?.timezone ? { timezone: profile.timezone } : {}),
@@ -220,47 +243,6 @@ export function toMessage(row: typeof agentMessages.$inferSelect): Message {
     skillsRead: row.skillsRead,
     createdAt: row.createdAt.toISOString(),
   };
-}
-
-/**
- * How far back to look for files, and how many to carry.
- *
- * Both bounds exist for the same reason: every file carried is its whole text
- * on every turn for the rest of the conversation. A student who attaches a
- * syllabus, a mark sheet and six photographs should not be paying for all
- * nine on their twentieth question -- so the most recent few win, and the
- * older ones go back to being findable in the vault rather than carried.
- */
-const ATTACHMENT_LOOKBACK = 40;
-const ATTACHMENT_LIMIT = 6;
-
-/**
- * The files this conversation has been given, newest first.
- *
- * The incoming message's own attachments lead, because they are what the
- * question is most likely about; the rest of the conversation follows.
- */
-async function conversationAttachments(
-  ctx: AppContext,
-  vault: Vault,
-  agentId: string,
-  incoming: MessageAttachment[],
-): Promise<{ name: string; body: string }[]> {
-  const rows = await ctx.db
-    .select({ attachments: agentMessages.attachments })
-    .from(agentMessages)
-    .where(eq(agentMessages.agentId, agentId))
-    .orderBy(desc(agentMessages.createdAt))
-    .limit(ATTACHMENT_LOOKBACK);
-
-  const names: string[] = [];
-  for (const file of [...incoming, ...rows.flatMap((row) => row.attachments ?? [])]) {
-    // Deduped by name: a file re-attached to a later message is one file.
-    if (!names.includes(file.name)) names.push(file.name);
-    if (names.length >= ATTACHMENT_LIMIT) break;
-  }
-
-  return readAttachments(vault, names);
 }
 
 /**

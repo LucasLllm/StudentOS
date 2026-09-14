@@ -17,33 +17,44 @@ import type { AppContext } from './context.js';
  * time and out of reach again, because only the incoming message's own
  * attachments were being read.
  *
- * Written against the real database because the fix is a query over stored
- * messages: a stub of that query would pass whatever it was told to.
+ * What keeps it fixed is the transcript: the file is read once, onto the
+ * question it came with, and every later turn replays that question. Written
+ * against the real database because the transcript is one, and a stub of it
+ * would pass whatever it was told to.
  */
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
 /**
- * Every user message the TURN gave the model, in order.
+ * Every request a TURN gave the model, in order.
  *
  * Turns are not the only model calls a first message makes any more -- naming
  * the chat is another, running beside it -- so they are told apart by the
  * turn context wrapper rather than by counting. Counting was what broke when
  * naming arrived, and would break again on the next thing that runs alongside.
  *
- * The last user message, not the first: a turn now replays the whole
- * conversation, and every earlier question is a user message too.
+ * The whole request, not just the question: a turn now replays the entire
+ * conversation, so where a file's text sits among those messages is itself
+ * the thing under test.
  */
-let seen: string[];
+let turns: { role: string; content: string }[][];
+
+/**
+ * What this turn actually asked: the last user message, the one in turn
+ * context. Every user message before it is replayed history.
+ */
+function asked(turn: number): string {
+  return turns[turn]?.findLast((m) => m.role === 'user')?.content ?? '';
+}
 
 async function contextWith(vaultRoot: string): Promise<AppContext> {
-  seen = [];
+  turns = [];
   return {
     db: await testDb(),
     llm: {
       chat: async ({ messages }: { messages: { role: string; content: string }[] }) => {
         const user = messages.findLast((m) => m.role === 'user');
-        if (user?.content.includes('<turn_context>')) seen.push(user.content);
+        if (user?.content.includes('<turn_context>')) turns.push(messages);
         return { content: 'ok', toolCalls: [], usage, finishReason: 'stop' as const };
       },
     },
@@ -91,7 +102,7 @@ describe('a file attached earlier in the conversation', () => {
       attachments: photo,
     });
 
-    expect(seen[0]).toContain('brass push-fit pneumatic connector');
+    expect(asked(0)).toContain('brass push-fit pneumatic connector');
   });
 
   it('is still there on the next question, which carries no files of its own', async () => {
@@ -112,7 +123,19 @@ describe('a file attached earlier in the conversation', () => {
     });
     await runTurnForAgent(ctx, { userId: user.id, agent, content: 'what size is the thread' });
 
-    expect(seen[1]).toContain('brass push-fit pneumatic connector');
+    /*
+     * Carried by the replay, not re-read onto the new question. The file was
+     * read once, on the turn it arrived, and stays in that turn's user message
+     * for the rest of the conversation -- so it is in the history the second
+     * request replays and nowhere near what the student has just asked.
+     */
+    const replayed = turns[1]!.filter(
+      (m) => m.role === 'user' && !m.content.includes('<turn_context>'),
+    );
+    expect(replayed.map((m) => m.content).join('\n')).toContain(
+      'brass push-fit pneumatic connector',
+    );
+    expect(asked(1)).not.toContain('brass push-fit pneumatic connector');
   });
 
   it('is not carried into a different chat', async () => {
@@ -131,7 +154,7 @@ describe('a file attached earlier in the conversation', () => {
     });
     await runTurnForAgent(ctx, { userId: user.id, agent: other, content: 'unrelated question' });
 
-    expect(seen[1]).not.toContain('brass push-fit pneumatic connector');
+    expect(asked(1)).not.toContain('brass push-fit pneumatic connector');
   });
 
   it('says nothing about attachments in a conversation that has had none', async () => {
@@ -141,6 +164,6 @@ describe('a file attached earlier in the conversation', () => {
 
     await runTurnForAgent(ctx, { userId: user.id, agent, content: 'just a question' });
 
-    expect(seen[0]).not.toContain('attached to this message');
+    expect(asked(0)).not.toContain('attached to this message');
   });
 });

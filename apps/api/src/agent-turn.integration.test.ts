@@ -45,6 +45,39 @@ beforeEach(async () => {
   resetTurns();
 });
 
+/**
+ * Chats that were had before the transcript table existed.
+ *
+ * Their words are in `agentMessages` and nowhere else, so the first turn after
+ * the upgrade has to seed the transcript from them or the model meets a
+ * stranger it has been talking to for a week.
+ */
+describe('a chat from before the transcript existed', () => {
+  it('starts from its last messages, once', async () => {
+    const alice = await createUser();
+    const agent = await createAgent(alice.id);
+    const db = await testDb();
+    await db.insert(agentMessages).values([
+      { agentId: agent.id, role: 'user', content: 'earlier question' },
+      { agentId: agent.id, role: 'assistant', content: 'earlier answer' },
+    ]);
+    const requests: { messages: { role: string; content: string }[] }[] = [];
+    const ctx = await contextWith(async (request) => {
+      requests.push(request as never);
+      return { content: 'ok', toolCalls: [], usage, finishReason: 'stop' as const };
+    });
+    await runTurnForAgent(ctx, { userId: alice.id, agent, content: 'now' });
+    expect(requests[0]!.messages.map((m) => m.content)).toEqual(
+      expect.arrayContaining(['earlier question', 'earlier answer']),
+    );
+    await runTurnForAgent(ctx, { userId: alice.id, agent, content: 'again' });
+    const items = await ctx.transcript.load(agent.id);
+    expect(
+      items.filter((i) => i.payload.kind === 'user' && i.payload.content === 'earlier question'),
+    ).toHaveLength(1);
+  });
+});
+
 describe('reporting what a turn is doing', () => {
   it('says it is thinking while it waits on the model', async () => {
     const alice = await createUser();
