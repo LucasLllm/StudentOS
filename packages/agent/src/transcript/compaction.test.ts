@@ -150,12 +150,20 @@ describe('compactTranscript', () => {
     });
 
     const [request, ctx] = chat.mock.calls[0] as unknown as [
-      { messages: { role: string; content: string }[]; tools?: unknown; effort?: string },
+      {
+        messages: { role: string; content: string }[];
+        tools?: unknown;
+        effort?: string;
+        maxOutputTokens?: number;
+      },
       { userId: string; agentId: string },
     ];
     // No tools: the summariser reads a conversation, it does not act in one.
     expect(request.tools).toBeUndefined();
-    expect(request.effort).toBe('medium');
+    expect(request.effort).toBe('low');
+    // Reasoning tokens are spent out of this budget, so a cap tight enough to
+    // fit the summary alone comes back 'incomplete' with no text at all.
+    expect(request.maxOutputTokens).toBe(16_000);
     expect(request.messages[0]).toEqual({ role: 'system', content: COMPACTION.body });
     expect(request.messages[1]?.content).toContain('Student: q1');
     expect(ctx).toMatchObject({ userId: 'u1', agentId: 'agent-1' });
@@ -188,7 +196,9 @@ describe('compactTranscript', () => {
 
     expect(compacted).toBeUndefined();
     expect(await store.count('agent-1')).toBe(before);
-    expect(warn).toHaveBeenCalled();
+    // A skip is invisible in the reply, so the warning has to say which chat
+    // lost its summary and why.
+    expect(warn).toHaveBeenCalledWith('compaction skipped', 'agent-1', 'the model is down');
     warn.mockRestore();
   });
 
@@ -209,7 +219,11 @@ describe('compactTranscript', () => {
     // so far amounted to nothing.
     expect(compacted).toBeUndefined();
     expect(await store.count('agent-1')).toBe(before);
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      'compaction skipped',
+      'agent-1',
+      'summariser returned no text',
+    );
     warn.mockRestore();
   });
 

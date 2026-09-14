@@ -9,7 +9,17 @@ import type {
   ToolCall,
 } from '../types.js';
 
-/** Default when a student brings an Anthropic key without naming a model. */
+/**
+ * Default when a student brings an Anthropic key without naming a model.
+ *
+ * Not Fable 5.1, deliberately. Clearing replays a stub in place of a tool
+ * result and compaction replays a summary in place of the turns it covers --
+ * both are edits to replayed history, which Fable 5.1 (and later models for
+ * everyone) rejects when thinking blocks are replayed alongside them, since
+ * preserved thinking has to match the turn it belongs to. Moving this default
+ * forward needs a format-aware render first, e.g. one that drops thinking
+ * blocks from edited turns. See transcript/render.ts.
+ */
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5';
 
 export interface AnthropicProviderOptions {

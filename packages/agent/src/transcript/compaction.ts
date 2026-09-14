@@ -110,10 +110,13 @@ export async function compactTranscript(
           { role: 'user', content: renderForSummary(options.items, cut) },
         ],
         // No tools: this call reads a conversation, it does not act in one.
-        // Medium effort because the work is recall, not reasoning, and the
+        // Low effort because the work is recall, not reasoning, and the
         // student is waiting for their answer behind it.
-        effort: 'medium',
-        maxOutputTokens: 4_000,
+        effort: 'low',
+        // Reasoning tokens are spent out of this budget on the Responses API,
+        // so a cap sized for the summary alone comes back 'incomplete' with no
+        // text -- a silently skipped compaction. 16k leaves room for both.
+        maxOutputTokens: 16_000,
       },
       {
         userId: options.userId,
@@ -123,12 +126,18 @@ export async function compactTranscript(
     );
     summary = response.content.trim();
   } catch (cause) {
-    console.warn('compaction skipped', cause);
+    // Which chat and why: a skip leaves no trace in the reply, so the log line
+    // is the only place the loss is visible.
+    console.warn(
+      'compaction skipped',
+      options.agentId,
+      cause instanceof Error ? cause.message : cause,
+    );
     return undefined;
   }
 
   if (!summary) {
-    console.warn('compaction skipped', 'the summariser returned no text');
+    console.warn('compaction skipped', options.agentId, 'summariser returned no text');
     return undefined;
   }
 

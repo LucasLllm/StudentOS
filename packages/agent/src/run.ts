@@ -473,16 +473,6 @@ export async function runAgentTurn(
 }
 
 /**
- * Assemble the system prompt.
- *
- * Ordering here is deliberate and worth preserving: stable content first
- * (purpose, then skills), volatile content last (memory). Providers cache on a
- * prefix match, so anything that changes per turn invalidates everything after
- * it. Putting recalled memory above the skill list would silently destroy the
- * cache hit rate -- and the cached-token discount is the main thing keeping the
- * platform tier affordable.
- */
-/**
  * What every agent is told about sites behind a login, before it has loaded
  * anything.
  *

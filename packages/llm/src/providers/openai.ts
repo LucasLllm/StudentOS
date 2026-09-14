@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
+import { toResponseInputItem } from 'openai/lib/responses/ResponseInputItems';
 import type { ResponseInputItemLike } from 'openai/lib/responses/ResponseInputItems';
 import type {
   ChatChunk,
@@ -177,6 +177,10 @@ export function toResponsesInput(messages: ChatMessage[]): {
 } {
   const systemParts: string[] = [];
   const input: OpenAI.Responses.ResponseInput = [];
+  // Collected across the whole request and warned about once: a long chat can
+  // carry dozens of the same unreplayable item, and one line per item would
+  // bury everything else in the log.
+  const droppedItemTypes: string[] = [];
 
   for (const message of messages) {
     if (message.role === 'system') {
@@ -204,7 +208,22 @@ export function toResponsesInput(messages: ChatMessage[]): {
        * in this wire format is replayable; anything else rebuilds the turn below.
        */
       if (message.payload?.format === 'openai_responses') {
-        input.push(...toResponseInputItems(message.payload.items as ResponseInputItemLike[]));
+        /*
+         * One item at a time, because the transcript is append-only. The
+         * bulk helper throws on an item type the installed SDK does not know,
+         * and a single stored item from a newer API would then break every
+         * later replay of that chat forever. Dropping it costs this turn some
+         * context; throwing costs the student the whole conversation.
+         */
+        for (const stored of message.payload.items as ResponseInputItemLike[]) {
+          try {
+            const item = toResponseInputItem(stored);
+            if (item) input.push(item);
+            else droppedItemTypes.push(itemTypeOf(stored));
+          } catch {
+            droppedItemTypes.push(itemTypeOf(stored));
+          }
+        }
         continue;
       }
       if (message.content) {
@@ -246,8 +265,18 @@ export function toResponsesInput(messages: ChatMessage[]): {
     input.push({ role: 'user', content: message.content });
   }
 
+  if (droppedItemTypes.length > 0) {
+    console.warn('dropped unreplayable response items', [...new Set(droppedItemTypes)]);
+  }
+
   return {
     instructions: systemParts.length > 0 ? systemParts.join('\n\n') : undefined,
     input,
   };
+}
+
+/** The stored item's `type`, for the warning, without assuming it has one. */
+function itemTypeOf(item: ResponseInputItemLike): string {
+  const type = (item as { type?: unknown }).type;
+  return typeof type === 'string' ? type : 'unknown';
 }

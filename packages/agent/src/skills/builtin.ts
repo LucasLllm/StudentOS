@@ -114,9 +114,8 @@ export function skillsSection(situation: SkillSituation): string {
     "Before you do any of the following, call skill_load with the skill's name and follow " +
     'what comes back. Load one only when the turn needs it: a question none of them covers ' +
     'needs none of them, and loading a skill for a question it does not cover is a wasted ' +
-    'step the student waits through. Many turns need one; a question none of them covers ' +
-    'needs none of them; load a second only when the work genuinely runs into what it ' +
-    'covers.\n' +
+    'step the student waits through. Many turns need one; load a second only when the work ' +
+    'genuinely runs into what it covers.\n' +
     availableSkills(situation)
       .map((skill) => `- ${skill.name}: ${skill.description}`)
       .join('\n')

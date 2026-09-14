@@ -157,6 +157,37 @@ describe('toResponsesInput', () => {
     expect(input[1]).toMatchObject({ type: 'reasoning', encrypted_content: 'opaque' });
   });
 
+  it('drops a stored item the installed SDK does not know and replays the rest', () => {
+    // The transcript is append-only: one item from a newer API that this SDK
+    // throws on would break every later replay of that chat forever.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { input } = toResponsesInput([
+      { role: 'user', content: 'open maths' },
+      {
+        role: 'assistant',
+        content: '',
+        payload: {
+          format: 'openai_responses',
+          items: [
+            { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
+            { type: 'made_up_future_item', id: 'x_1' },
+          ],
+        },
+      },
+    ]);
+
+    expect(
+      input.map((item) =>
+        'type' in item ? (item as { type: string }).type : (item as { role: string }).role,
+      ),
+    ).toEqual(['user', 'reasoning']);
+    expect(warn).toHaveBeenCalledWith(
+      'dropped unreplayable response items',
+      expect.arrayContaining(['made_up_future_item']),
+    );
+    warn.mockRestore();
+  });
+
   it('falls back to rebuilding the turn when the payload is another provider’s', () => {
     const { input } = toResponsesInput([
       { role: 'user', content: 'hi' },

@@ -86,6 +86,11 @@ export async function runTurnForAgent(
    * this has run, and it is read before the question below is inserted so
    * the seed holds the conversation as it was, without today's message in it
    * twice.
+   *
+   * Two first turns arriving at once on a legacy chat can both seed: the
+   * turns-in-flight count is a counter, not a lock, so both read zero. The
+   * effect is the seeded words replayed twice, not a crash; a per-chat lock is
+   * the fix if it is ever observed.
    */
   if (!opening && (await ctx.transcript.count(agent.id)) === 0) {
     const rows = await ctx.db
