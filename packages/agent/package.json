@@ -14,7 +14,8 @@
     "eval:injection": "tsx src/evals/injection.ts",
     "eval:vault": "tsx src/evals/vault-skills.ts",
     "eval:tools": "tsx src/evals/tool-choice.ts",
-    "eval:skills": "tsx src/evals/skill-choice.ts"
+    "eval:skills": "tsx src/evals/skill-choice.ts",
+    "eval:conversation": "tsx src/evals/conversation.ts"
   },
   "dependencies": {
     "@contexto/db": "workspace:*",
