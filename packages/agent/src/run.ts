@@ -302,7 +302,11 @@ export async function runAgentTurn(
     response.toolCalls.forEach((call, index) => {
       // Capped before it is sent or stored: one runaway page must not eat the
       // context window, and it would be replayed on every turn after this one.
-      const { text: content, truncated } = truncateToolResult(JSON.stringify(results[index]));
+      // `?? 'null'`: a tool that returns nothing stringifies to undefined, and
+      // losing the whole turn over that would be absurd.
+      const { text: content, truncated } = truncateToolResult(
+        JSON.stringify(results[index]) ?? 'null',
+      );
       messages.push({ role: 'tool', toolCallId: call.id, content });
       pending.push({
         agentId: input.agentId,
@@ -375,7 +379,17 @@ export async function runAgentTurn(
           }
         : {}),
     },
-    ...(last?.payload ? { providerPayload: last.payload } : {}),
+    /*
+     * Only the payload that actually contains the words the student read.
+     *
+     * A stored payload is replayed INSTEAD of the content, so one belonging to
+     * a reply that was thrown away -- the fallback string, or a response that
+     * came back with no text at all -- would show the model something other
+     * than what was said, and a reasoning-only payload would sit at the head of
+     * every later turn as a dangling item the provider can refuse. The
+     * transcript is append-only, so that would be permanent.
+     */
+    ...(last?.payload && text(last.content) === reply ? { providerPayload: last.payload } : {}),
   });
   await transcript.append(pending);
 

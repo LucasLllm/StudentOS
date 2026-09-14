@@ -851,6 +851,63 @@ describe('the conversation the model sees', () => {
     expect(replay?.messages[4]?.content).toBe('A');
     expect(replay?.messages[5]?.content).toContain('<turn_context>');
     expect(replay?.messages[5]?.content).toContain('second question');
+
+    // The stored result names the tool that produced it: the id alone is a
+    // provider's pairing key, not something a transcript view can read.
+    const result = (await deps.transcript.load('a1')).find(
+      (item) => item.payload.kind === 'tool_result',
+    );
+    expect(result?.payload).toMatchObject({ toolName: 'probe', toolCallId: 'c1' });
+  });
+
+  it('stores the reply with the reasoning that produced it', async () => {
+    const payload = {
+      format: 'openai_responses' as const,
+      items: [{ type: 'reasoning' }, { type: 'message' }],
+    };
+    const requests: Request[] = [];
+    const deps = depsWith(async (request) => {
+      requests.push(request as Request);
+      return { content: 'A', toolCalls: [], payload, usage, finishReason: 'stop' as const };
+    });
+
+    await runAgentTurn(deps, input('first question'));
+
+    const [, stored] = await deps.transcript.load('a1');
+    expect(stored?.payload).toEqual({
+      kind: 'assistant',
+      content: 'A',
+      // What the request cost, which is what the compaction estimate anchors on.
+      usage: { inputTokens: 1, cachedInputTokens: 0 },
+    });
+    expect(stored?.providerPayload).toEqual(payload);
+
+    await runAgentTurn(deps, input('second question'));
+
+    expect(requests[1]?.messages.find((m) => m.role === 'assistant')?.payload).toEqual(payload);
+  });
+
+  it('keeps the reasoning behind a reply the student never saw out of the transcript', async () => {
+    /*
+     * The model said nothing and the fallback answered for it. Storing that
+     * response's payload would replay reasoning with no message under it --
+     * the provider can refuse the whole request over that, and an append-only
+     * transcript would carry it on every turn from here on.
+     */
+    const deps = depsWith(async () => ({
+      content: '',
+      toolCalls: [],
+      payload: { format: 'openai_responses' as const, items: [{ type: 'reasoning' }] },
+      usage,
+      finishReason: 'stop' as const,
+    }));
+
+    const { reply } = await runAgentTurn(deps, input('go'));
+
+    expect(reply.trim()).not.toBe('');
+    const stored = (await deps.transcript.load('a1')).at(-1);
+    expect(stored?.payload).toMatchObject({ kind: 'assistant', content: reply });
+    expect(stored?.providerPayload).toBeUndefined();
   });
 
   it('no longer pastes memory into the turn', async () => {
@@ -963,6 +1020,12 @@ describe('the conversation the model sees', () => {
     expect(requests[1]?.messages.find((m) => m.role === 'tool')?.content).toContain(
       'characters truncated',
     );
+    // Marked as cut where it is stored too, so a later reader knows the result
+    // it is looking at is not the whole of what the tool said.
+    const stored = (await deps.transcript.load('a1')).find(
+      (item) => item.payload.kind === 'tool_result',
+    );
+    expect(stored?.payload).toMatchObject({ toolName: 'firehose', truncated: true });
   });
 
   it("writes nothing after the student's message when the loop throws", async () => {
