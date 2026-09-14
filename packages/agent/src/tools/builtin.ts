@@ -30,6 +30,7 @@ import {
 } from './google/gmail.js';
 import { browseWithAgent, readSchoolPortal, refreshSchoolPortal } from './portal.js';
 import { searchMemory } from './memory.js';
+import { updatePlan } from './plan.js';
 import { loadSkill } from './skills.js';
 import { searchVault } from './vault.js';
 import { openVaultDocument } from './documents.js';
@@ -41,6 +42,7 @@ const ALL_TOOLS: Tool<never, unknown>[] = [
   // No scopes: an agent's own history and its own vault are not behind
   // anyone's OAuth grant.
   searchMemory as Tool<never, unknown>,
+  updatePlan as Tool<never, unknown>,
   loadSkill as Tool<never, unknown>,
   searchVault as Tool<never, unknown>,
   openVaultDocument as Tool<never, unknown>,

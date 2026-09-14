@@ -131,6 +131,7 @@ export const BASIC_PHRASES: readonly Phrase[] = [
   { text: 'Drafting…', themes: ['writing', 'mail'] },
   { text: 'Brainstorming…', themes: ['reasoning', 'writing'] },
   { text: 'Working…', themes: 'any' },
+  { text: 'Updating the plan…', themes: ['reasoning'] },
   { text: 'Unpacking…', themes: ['files', 'mail', 'reading', 'browsing'] },
   { text: 'Synergizing…', themes: ['reasoning', 'coursework', 'writing'] },
 ];

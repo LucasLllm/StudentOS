@@ -39,6 +39,7 @@ export { searchVault } from './tools/vault.js';
 export { openVaultDocument } from './tools/documents.js';
 export { loadSkill } from './tools/skills.js';
 export { writeVaultNote } from './tools/vault-write.js';
+export { updatePlan } from './tools/plan.js';
 export {
   readDocument,
   writeDocument,

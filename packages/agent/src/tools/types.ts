@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { MemoryStore } from '../memory/types.js';
+import type { PlanStore } from '../plan/types.js';
 import type { Vault } from '../vault/vault.js';
 import type { ScopeGroup } from './google/scopes.js';
 import type { AudioTranscriber } from './transcribe.js';
@@ -77,6 +78,16 @@ export interface ToolContext {
    * must report as "not connected yet", not as an error.
    */
   portals?: PortalSnapshotSource;
+  /**
+   * Where plan_update reads and writes this agent's plan.
+   *
+   * Optional so a deployment without one still builds; plan_update reports
+   * its absence rather than pretending to save, which the model would have
+   * no way to tell from a real save.
+   */
+  plans?: PlanStore;
+  /** The transcript seq of the current turn's user item, for plan_update's stamp. */
+  turnSeq?: number;
   signal?: AbortSignal;
 }
 
