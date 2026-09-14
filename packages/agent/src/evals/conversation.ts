@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { OpenAiProvider, PLATFORM_MODEL } from '@contexto/llm';
 import type { ChatRequest, ChatResponse, ProviderContext } from '@contexto/llm';
+import { COMPACTION } from '../prompts/documents.js';
 import { runAgentTurn } from '../run.js';
 import type { AgentRunDeps } from '../run.js';
 import { queryTerms, rankByTermMatches } from '../memory/search.js';
@@ -176,6 +177,8 @@ function savedPlan(result: unknown): PlanStep[] | undefined {
  * happening. Comparing consecutive saved plans is the only way to see it --
  * the final plan looks identical either way.
  */
+// Matched by their text: a PlanStep has no id, and the model may reorder or
+// reword the list between calls.
 function skippedInProgress(plans: PlanStep[][]): string | undefined {
   for (let i = 1; i < plans.length; i++) {
     const before = new Map((plans[i - 1] ?? []).map((step) => [step.step, step.status]));
@@ -207,6 +210,7 @@ interface Outcome {
   arm: Arm;
   passed: boolean;
   why: string;
+  /** Summariser calls this arm made -- one per compaction. */
   compactions: number;
   /** Mean cached share of the input, over the turns a cache should be warm by. */
   cacheRatio: number;
@@ -242,11 +246,22 @@ async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Pro
     return result;
   };
 
-  // Every model call the turn made, including the summariser's: a compaction
-  // is part of what the turn cost the student and belongs in its numbers.
+  /*
+   * Every model call the turn made, including the summariser's: a compaction
+   * is part of what the turn cost the student and belongs in its numbers.
+   *
+   * The summariser's calls are also counted, because they are the only honest
+   * count of how often this arm compacted. The transcript cannot say: load()
+   * returns the latest compaction item and drops the ones it superseded, so
+   * five compactions and one look identical there. A compaction is exactly
+   * one chat call opening with the summariser's own system prompt.
+   */
+  let compactions = 0;
   const calls: ChatResponse[] = [];
   const llm = {
     chat: async (request: ChatRequest, ctx: ProviderContext): Promise<ChatResponse> => {
+      const [first] = request.messages;
+      if (first?.role === 'system' && first.content === COMPACTION.body) compactions += 1;
       const response = await provider.chat(request, ctx);
       calls.push(response);
       return response;
@@ -320,14 +335,12 @@ async function runArm(apiKey: string, testCase: ConversationCase, arm: Arm): Pro
       : settled.reduce((n, stat) => n + stat.cachedInputTokens / stat.inputTokens, 0) /
         settled.length;
 
-  const items = await transcript.load(agentId);
-
   return {
     testCase,
     arm,
     passed: failures.length === 0,
     why: failures.join('; ') || 'ok',
-    compactions: items.filter((item) => item.payload.kind === 'compaction').length,
+    compactions,
     cacheRatio,
     lengthFinishes: stats.filter((stat) => stat.ranOutOfRoom).length,
     reasoningTurns: stats.filter((stat) => stat.replayedReasoning).length,
