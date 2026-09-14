@@ -83,9 +83,11 @@ export function clearingWatermark(
  * Applies the budget to a turn's transcript before it is rendered.
  *
  * Clearing first, then compaction on what clearing left: throwing away stale
- * tool results is free and often enough on its own, and doing it first means
- * the summariser is never paid to read a page of text the budget was about
- * to discard anyway.
+ * tool results is free and often enough on its own, so an ordinary chat never
+ * pays for a summariser call at all. A result cleared here is still shown to
+ * the summariser if compaction follows, capped -- that pass is the last
+ * chance to keep whatever mattered in it before the turn it belonged to
+ * leaves the transcript for good.
  */
 export async function applyBudget(
   deps: { llm: Pick<LlmRegistry, 'chat'>; transcript: TranscriptStore },

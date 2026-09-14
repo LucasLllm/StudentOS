@@ -1100,6 +1100,10 @@ describe('the conversation the model sees', () => {
     await runAgentTurn(deps, input('second question', { contextBudget }));
     await runAgentTurn(deps, input('third question', { contextBudget }));
 
+    // Four calls, not five: the second turn has only one user item in its
+    // history, which is the whole of the kept tail, so nothing is summarised
+    // until the third turn loads two.
+    expect(requests).toHaveLength(4);
     const replay = requests.at(-1);
     expect(replay?.messages[1]?.content.startsWith(COMPACTION_HANDOFF)).toBe(true);
     expect(replay?.messages[1]?.content).toContain('SUMMARY');

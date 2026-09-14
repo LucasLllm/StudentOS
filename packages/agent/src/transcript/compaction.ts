@@ -33,8 +33,11 @@ export function compactionCut(
   keepLastUserTurns: number,
 ): number | undefined {
   const users = items.filter((item) => item.payload.kind === 'user');
-  // Undefined when the lookup falls off either end: fewer user turns than the
-  // tail keeps, so there is nothing older to summarise.
+  // Strictly fewer kept turns than there are: at exactly `keepLastUserTurns`
+  // the cut would land on the first user item, leaving the summariser an empty
+  // conversation to write a summary of -- and a compaction that supersedes
+  // nothing.
+  if (users.length <= keepLastUserTurns) return undefined;
   return users[users.length - keepLastUserTurns]?.seq;
 }
 

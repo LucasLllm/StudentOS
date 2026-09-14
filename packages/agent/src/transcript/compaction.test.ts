@@ -67,6 +67,12 @@ describe('compactionCut', () => {
     expect(compactionCut(conversation(3), 4)).toBeUndefined();
   });
 
+  it('leaves a conversation with exactly the kept turns alone', () => {
+    // The boundary that matters: 4 user turns keeping 4 leaves nothing before
+    // the cut, and a summariser handed an empty conversation invents one.
+    expect(compactionCut(conversation(4), 4)).toBeUndefined();
+  });
+
   it('cuts at the user turn that starts the kept tail', () => {
     const items = conversation(6);
 
@@ -180,6 +186,27 @@ describe('compactTranscript', () => {
       budget: budgetKeeping(1),
     });
 
+    expect(compacted).toBeUndefined();
+    expect(await store.count('agent-1')).toBe(before);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('skips rather than fails when the summariser returns nothing', async () => {
+    const store = new InMemoryTranscriptStore();
+    const items = await storedConversation(store, 3);
+    const before = await store.count('agent-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const compacted = await compactTranscript(depsWith(chatReturning('   '), store), {
+      agentId: 'agent-1',
+      userId: 'u1',
+      items,
+      budget: budgetKeeping(1),
+    });
+
+    // An empty summary stored as a handoff would tell the next turn the chat
+    // so far amounted to nothing.
     expect(compacted).toBeUndefined();
     expect(await store.count('agent-1')).toBe(before);
     expect(warn).toHaveBeenCalled();
