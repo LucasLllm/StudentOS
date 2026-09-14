@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentActivity } from '@contexto/shared';
 import type { LlmRegistry } from '@contexto/llm';
+import { compactTranscript } from './compaction.js';
 import { estimateTranscriptTokens } from './render.js';
 import type { TranscriptItem, TranscriptStore } from './types.js';
 
@@ -10,20 +11,19 @@ import type { TranscriptItem, TranscriptStore } from './types.js';
  * A tutoring conversation with one student can run for weeks without a new
  * chat ever starting, and tool results -- a page of a textbook, a browser
  * snapshot -- are the biggest thing in it. Left alone the transcript grows
- * without bound and every turn eventually fails once it stops fitting. This
- * is the first rung of the ladder that keeps it bounded: clearing old tool
- * results behind a watermark. The next rung -- compacting whole turns once
- * clearing alone is not enough -- is a seam left in `applyBudget` for the
- * following task, not built here.
+ * without bound and every turn eventually fails once it stops fitting. Two
+ * rungs keep it bounded, in this order: clearing old tool results behind a
+ * watermark, and -- when clearing alone still leaves the transcript too big
+ * -- compacting the older turns into a handoff summary (compaction.ts).
  */
 export interface ContextBudget {
   /** Above this estimated token count, old tool results start clearing. */
   clearToolResultsAboveTokens: number;
   /** How many of the most recent tool results stay verbatim once clearing runs. */
   keepRecentToolResults: number;
-  /** Above this, even after clearing, whole turns get compacted. Wired up in the next task. */
+  /** Above this, even after clearing, whole turns get compacted. */
   compactAboveTokens: number;
-  /** How many of the most recent user turns compaction leaves verbatim. Wired up in the next task. */
+  /** How many of the most recent user turns compaction leaves verbatim. */
   keepLastUserTurns: number;
 }
 
@@ -82,12 +82,10 @@ export function clearingWatermark(
 /**
  * Applies the budget to a turn's transcript before it is rendered.
  *
- * Clearing today. Compaction (the next task on the ladder) is added here
- * after clearing has run, using the `llm` and `onActivity` this function
- * already threads through for it -- summarising the oldest turns down to
- * `keepLastUserTurns` once clearing alone leaves the transcript over
- * `compactAboveTokens`. Left unimplemented rather than stubbed, so there is
- * nothing to un-stub later.
+ * Clearing first, then compaction on what clearing left: throwing away stale
+ * tool results is free and often enough on its own, and doing it first means
+ * the summariser is never paid to read a page of text the budget was about
+ * to discard anyway.
  */
 export async function applyBudget(
   deps: { llm: Pick<LlmRegistry, 'chat'>; transcript: TranscriptStore },
@@ -100,11 +98,29 @@ export async function applyBudget(
     onActivity?: (a: AgentActivity) => void;
   },
 ): Promise<TranscriptItem[]> {
-  const watermark = clearingWatermark(options.items, options.budget);
-  if (!watermark) return options.items;
+  let items = options.items;
 
-  const appended = await deps.transcript.append([
-    { agentId: options.agentId, turnId: randomUUID(), payload: watermark },
-  ]);
-  return [...options.items, ...appended];
+  const watermark = clearingWatermark(items, options.budget);
+  if (watermark) {
+    const appended = await deps.transcript.append([
+      { agentId: options.agentId, turnId: randomUUID(), payload: watermark },
+    ]);
+    items = [...items, ...appended];
+  }
+
+  if (estimateTranscriptTokens(items) > options.budget.compactAboveTokens) {
+    // The summariser call takes seconds the student is waiting through, with
+    // nothing else on screen to explain them.
+    options.onActivity?.({ kind: 'thinking' });
+    const compacted = await compactTranscript(deps, {
+      agentId: options.agentId,
+      userId: options.userId,
+      items,
+      budget: options.budget,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (compacted) items = compacted;
+  }
+
+  return items;
 }

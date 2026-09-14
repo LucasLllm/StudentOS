@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import { buildSystemPrompt, currentTimeSection, runAgentTurn } from './run.js';
-import { RESPONDING, VAULT_READING } from './prompts/documents.js';
+import { COMPACTION, RESPONDING, VAULT_READING } from './prompts/documents.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadSkill } from './tools/skills.js';
 import { InMemoryTranscriptStore } from './transcript/in-memory.js';
+import { COMPACTION_HANDOFF } from './transcript/render.js';
 import type { ToolContext } from './tools/types.js';
 import type { AgentRunDeps } from './run.js';
 
@@ -1075,6 +1076,33 @@ describe('the conversation the model sees', () => {
 
     const replay = requests[2];
     expect(replay?.messages.find((m) => m.role === 'tool')?.content).toContain('cleared');
+  });
+
+  it('hands the older part of a long chat to the next turn as a summary', async () => {
+    // A usage big enough that a single turn's worth of it exceeds the tiny
+    // threshold below -- the point of this test is the wiring, not the size.
+    const bigUsage = { inputTokens: 100, outputTokens: 1, cachedInputTokens: 0 };
+    const requests: Request[] = [];
+    const deps = depsWith(async (request) => {
+      const chatRequest = request as Request;
+      requests.push(chatRequest);
+      const summarising = chatRequest.messages[0]?.content === COMPACTION.body;
+      return {
+        content: summarising ? 'SUMMARY' : 'ok',
+        toolCalls: [],
+        usage: bigUsage,
+        finishReason: 'stop' as const,
+      };
+    });
+    const contextBudget = { compactAboveTokens: 1, keepLastUserTurns: 1 };
+
+    await runAgentTurn(deps, input('first question', { contextBudget }));
+    await runAgentTurn(deps, input('second question', { contextBudget }));
+    await runAgentTurn(deps, input('third question', { contextBudget }));
+
+    const replay = requests.at(-1);
+    expect(replay?.messages[1]?.content.startsWith(COMPACTION_HANDOFF)).toBe(true);
+    expect(replay?.messages[1]?.content).toContain('SUMMARY');
   });
 
   it('stores the files with the message that brought them, and only there', async () => {
