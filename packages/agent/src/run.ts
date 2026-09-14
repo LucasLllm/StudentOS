@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentActivity } from '@contexto/shared';
 import type { ChatMessage, ChatResponse, LlmRegistry } from '@contexto/llm';
 import { RESPONDING } from './prompts/documents.js';
+import { renderPlan } from './plan/render.js';
 import { skillsSection } from './skills/builtin.js';
 import { skillRequested } from './tools/skills.js';
 import { applyBudget, DEFAULT_CONTEXT_BUDGET } from './transcript/budget.js';
@@ -13,6 +14,7 @@ import type {
   TranscriptPayload,
   TranscriptStore,
 } from './transcript/types.js';
+import type { AgentPlan, PlanStore } from './plan/types.js';
 import type { MemoryStore } from './memory/types.js';
 import type { SkillRegistry } from './skills/types.js';
 import type { GoogleTokenProvider, ToolContext, PortalSnapshotSource } from './tools/types.js';
@@ -40,6 +42,14 @@ export interface AgentRunDeps {
   skills: SkillRegistry;
   tools: ToolRegistry;
   transcript: TranscriptStore;
+  /**
+   * Where this conversation's plan is kept, when the deployment keeps one.
+   *
+   * Optional because a turn without it is still a turn: the eval harness and
+   * every test that predates plans run with no store at all, and an agent that
+   * has never written a plan behaves exactly as it did before.
+   */
+  plans?: PlanStore;
 }
 
 export interface AgentRunInput {
@@ -198,7 +208,21 @@ export async function runAgentTurn(
    * can see their own message on the screen. Writing it now is what makes the
    * next turn's replay match what they are looking at.
    */
-  await transcript.append([{ agentId: input.agentId, turnId, payload: userItem }]);
+  const [stored] = await transcript.append([{ agentId: input.agentId, turnId, payload: userItem }]);
+
+  /*
+   * The plan, and how long it has gone without a word.
+   *
+   * Counted in user turns: every user item the transcript still holds from
+   * after the plan was last written, plus the turn happening now -- so it is
+   * one, not zero, on the turn after a write. That count is the whole of what
+   * decides whether the recital below nudges the model to revisit its plan.
+   */
+  const plan = deps.plans ? await deps.plans.read(input.agentId) : null;
+  const turnsSince = plan
+    ? history.filter((item) => item.payload.kind === 'user' && item.seq > plan.updatedAtSeq)
+        .length + 1
+    : 0;
 
   const messages: ChatMessage[] = [
     // Static for the whole conversation, so it caches. Anything that changes
@@ -210,7 +234,10 @@ export async function runAgentTurn(
     ...renderTranscript(history),
     {
       role: 'user',
-      content: buildUserMessage(buildTurnContext(input.timezone), renderUserItem(userItem)),
+      content: buildUserMessage(
+        buildTurnContext(input.timezone, plan ? { plan, turnsSince } : undefined),
+        renderUserItem(userItem),
+      ),
     },
   ];
 
@@ -226,6 +253,10 @@ export async function runAgentTurn(
     ...(input.residentialFetch ? { residentialFetch: input.residentialFetch } : {}),
     ...(input.portals ? { portals: input.portals } : {}),
     ...(input.vault ? { vault: input.vault } : {}),
+    ...(deps.plans ? { plans: deps.plans } : {}),
+    // What plan_update stamps on whatever it saves. Without it every plan the
+    // model writes looks written on turn zero, and is stale the moment it lands.
+    ...(stored ? { turnSeq: stored.seq } : {}),
   };
 
   // Empty rather than [] -- some providers reject a zero-length tools array,
@@ -587,7 +618,10 @@ export function buildSystemPrompt(
  * The block is labelled because it rides along with the student's message and
  * must not be read as something the student typed.
  */
-export function buildTurnContext(timezone: string | undefined): string {
+export function buildTurnContext(
+  timezone: string | undefined,
+  plan?: { plan: AgentPlan; turnsSince: number },
+): string {
   /*
    * Temporal grounding.
    *
@@ -596,7 +630,24 @@ export function buildTurnContext(timezone: string | undefined): string {
    * student's coursework use -- so it asks the student what timezone they
    * are in, every time, which reads as the agent being broken.
    */
-  return currentTimeSection(timezone);
+  const sections = [currentTimeSection(timezone)];
+
+  /*
+   * The plan, last, and rewritten every turn.
+   *
+   * Not because it changed -- usually it has not -- but because of where the
+   * end of the context is. Attention is weakest in the middle of a long
+   * context and strongest at its ends (the lost-in-the-middle result), so a
+   * plan stated once at the top of a conversation is the plan the model stops
+   * seeing by the twentieth turn. Manus calls the fix recitation: write the
+   * goal back into the most recent tokens, every time, so the thing being
+   * worked towards is never the thing furthest from the model's attention.
+   * It costs a few dozen tokens a turn, below the clock and directly above
+   * what the student just said.
+   */
+  if (plan) sections.push(renderPlan(plan.plan, plan.turnsSince));
+
+  return sections.join('\n\n');
 }
 
 /**

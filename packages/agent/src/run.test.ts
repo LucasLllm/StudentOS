@@ -6,6 +6,7 @@ import { ToolRegistry } from './tools/registry.js';
 import { loadSkill } from './tools/skills.js';
 import { InMemoryTranscriptStore } from './transcript/in-memory.js';
 import { COMPACTION_HANDOFF } from './transcript/render.js';
+import type { AgentPlan } from './plan/types.js';
 import type { ToolContext } from './tools/types.js';
 import type { AgentRunDeps } from './run.js';
 
@@ -1125,5 +1126,155 @@ describe('the conversation the model sees', () => {
     const users = requests[1]?.messages.filter((m) => m.role === 'user') ?? [];
     expect(users[0]?.content).toContain('A brass connector.');
     expect(users.at(-1)?.content).not.toContain('A brass connector.');
+  });
+});
+
+/**
+ * The plan, recited where the model is actually looking.
+ *
+ * A plan stated once at the top of a conversation is the plan the model stops
+ * seeing: the middle of a long context is where attention is weakest. So it is
+ * rewritten at the end of every turn's context -- under the clock, directly
+ * above what the student just typed -- and says so when it has gone stale.
+ */
+describe('the plan in the turn context', () => {
+  type Seen = { role: string; content: string };
+
+  const steps = [
+    { step: 'Read the brief', status: 'completed' as const },
+    { step: 'Draft the answer', status: 'in_progress' as const },
+  ];
+
+  /** Records what the turn sends, with a plan store and a transcript of its own. */
+  function planDeps(plan: AgentPlan | null, transcript = new InMemoryTranscriptStore()) {
+    const seen: Seen[] = [];
+    const deps = {
+      llm: {
+        async chat(request: unknown) {
+          seen.push(...(request as { messages: Seen[] }).messages);
+          return {
+            content: 'done',
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            finishReason: 'stop' as const,
+          };
+        },
+      },
+      memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+      skills: { list: async () => [] },
+      tools: new ToolRegistry(),
+      transcript,
+      plans: { read: async () => plan, save: async () => {} },
+    } as unknown as AgentRunDeps;
+    return { deps, seen };
+  }
+
+  /** What rode in front of the student's message on the last request sent. */
+  function turnContextOf(seen: Seen[]): string {
+    const user = seen.filter((m) => m.role === 'user').at(-1)?.content ?? '';
+    return user.slice(user.indexOf('<turn_context>'), user.indexOf('</turn_context>'));
+  }
+
+  const ask = {
+    userId: 'u1',
+    agentId: 'a1',
+    purpose: 'keep me on top of chemistry',
+    message: 'go',
+    timezone: 'Europe/London',
+  } as never;
+
+  it('recites the plan as the last section, under the clock', async () => {
+    // seq 1 is this turn's own user item: the plan was written a turn ago, so
+    // nothing is stale.
+    const { deps, seen } = planDeps({ steps, updatedAtSeq: 1 });
+
+    await runAgentTurn(deps, ask);
+
+    const context = turnContextOf(seen);
+    expect(context).toContain('[in progress] Draft the answer');
+    // Last, because that is where attention is strongest -- not merely present.
+    expect(context.indexOf('Your plan for this conversation')).toBeGreaterThan(
+      context.indexOf('Right now it is'),
+    );
+    expect(context.trimEnd().endsWith('2. [in progress] Draft the answer')).toBe(true);
+    expect(context).not.toMatch(/not been updated/);
+  });
+
+  it('nudges the model once the plan has gone a few turns without a write', async () => {
+    const transcript = new InMemoryTranscriptStore();
+    await transcript.append(
+      ['first', 'second', 'third'].map((content) => ({
+        agentId: 'a1',
+        turnId: 'earlier',
+        payload: { kind: 'user' as const, content },
+      })),
+    );
+    // Written on the first of those turns: two user turns have gone by since,
+    // and this one makes three.
+    const { deps, seen } = planDeps({ steps, updatedAtSeq: 1 }, transcript);
+
+    await runAgentTurn(deps, ask);
+
+    expect(turnContextOf(seen)).toMatch(/not been updated for a few turns/);
+  });
+
+  it('says nothing about a plan when there is none', async () => {
+    // A heading with no steps under it tells the model there is supposed to be
+    // a plan here and that it is empty.
+    const { deps, seen } = planDeps(null);
+
+    await runAgentTurn(deps, ask);
+
+    const context = turnContextOf(seen);
+    expect(context).toContain('Right now it is');
+    expect(context).not.toContain('Your plan for this conversation');
+  });
+
+  it('hands the plan store and this turn to the tools', async () => {
+    // What plan_update writes with: without the seq, every plan it saves looks
+    // like it was written on turn zero and is stale the moment it lands.
+    const contexts: ToolContext[] = [];
+    const tools = new ToolRegistry();
+    tools.register({
+      id: 'probe',
+      description: 'records the context it receives',
+      inputSchema: z.object({}),
+      execute: async (_input: Record<string, never>, ctx: ToolContext) => {
+        contexts.push(ctx);
+        return 'ok';
+      },
+    } as never);
+
+    let asked = false;
+    const plans = { read: async () => null, save: async () => {} };
+    const transcript = new InMemoryTranscriptStore();
+    const deps = {
+      llm: {
+        async chat() {
+          const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+          if (asked)
+            return { content: 'done', toolCalls: [], usage, finishReason: 'stop' as const };
+          asked = true;
+          return {
+            content: '',
+            toolCalls: [{ id: 'c1', name: 'probe', arguments: '{}' }],
+            usage,
+            finishReason: 'tool_calls' as const,
+          };
+        },
+      },
+      memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+      skills: { list: async () => [] },
+      tools,
+      transcript,
+      plans,
+    } as unknown as AgentRunDeps;
+
+    await runAgentTurn(deps, ask);
+
+    const stored = (await transcript.load('a1')).find((item) => item.payload.kind === 'user');
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.plans).toBe(plans);
+    expect(contexts[0]?.turnSeq).toBe(stored?.seq);
   });
 });

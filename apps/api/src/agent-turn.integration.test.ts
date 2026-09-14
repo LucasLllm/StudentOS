@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { agentMessages } from '@contexto/db';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PostgresTranscriptStore } from '@contexto/agent';
+import { PostgresPlanStore, PostgresTranscriptStore } from '@contexto/agent';
 import { runTurnForAgent } from './agent-turn.js';
 import { resetTurns, turnActivity, turnRunning } from './turns-in-flight.js';
 import { createAgent, createUser, reset, testDb } from './test-support/harness.js';
@@ -34,6 +34,7 @@ async function contextWith(
     memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
     skills: { list: async () => [] },
     transcript: new PostgresTranscriptStore(await testDb()),
+    plans: new PostgresPlanStore(await testDb()),
     auth: {},
     youtube: {},
     youtubeTranscripts: {},

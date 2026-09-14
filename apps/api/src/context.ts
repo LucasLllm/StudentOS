@@ -2,6 +2,7 @@ import { createDatabase, type Database } from '@contexto/db';
 import { CredentialVault, EnvMasterKeyProvider, LlmRegistry, QuotaService } from '@contexto/llm';
 import {
   PostgresMemoryStore,
+  PostgresPlanStore,
   PostgresSkillRegistry,
   PostgresTranscriptStore,
 } from '@contexto/agent';
@@ -33,6 +34,8 @@ export interface AppContext {
   skills: PostgresSkillRegistry;
   /** What every turn replays: this chat, as it actually happened. */
   transcript: PostgresTranscriptStore;
+  /** The plan the model keeps for a chat, recited back to it every turn. */
+  plans: PostgresPlanStore;
   /** Undefined when the Telegram gateway is not configured. */
   telegram: TelegramChannel | undefined;
   /** Undefined when there is no platform key to transcribe with. */
@@ -76,6 +79,7 @@ export function createContext(env: Env): AppContext {
     memory: new PostgresMemoryStore(db),
     skills: new PostgresSkillRegistry(db),
     transcript: new PostgresTranscriptStore(db),
+    plans: new PostgresPlanStore(db),
 
     // Shares the platform key. A student on their own OpenAI key still gets
     // transcription; it is not metered per student either way.

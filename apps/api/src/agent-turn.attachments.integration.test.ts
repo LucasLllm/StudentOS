@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PostgresTranscriptStore, Vault } from '@contexto/agent';
+import { PostgresPlanStore, PostgresTranscriptStore, Vault } from '@contexto/agent';
 import { runTurnForAgent } from './agent-turn.js';
 import { resetTurns } from './turns-in-flight.js';
 import { createAgent, createUser, reset, testDb } from './test-support/harness.js';
@@ -61,6 +61,7 @@ async function contextWith(vaultRoot: string): Promise<AppContext> {
     memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
     skills: { list: async () => [] },
     transcript: new PostgresTranscriptStore(await testDb()),
+    plans: new PostgresPlanStore(await testDb()),
     auth: {},
     youtube: {},
     youtubeTranscripts: {},
