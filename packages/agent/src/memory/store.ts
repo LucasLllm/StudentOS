@@ -12,17 +12,15 @@ import type {
 } from './types.js';
 
 /*
- * How many past exchanges ride along on every turn.
+ * How many exchanges recall returns when nothing more specific is asked for.
  *
- * This is the whole of the agent's conversational continuity -- a turn sends
- * the system prompt and one message, never a transcript -- so it cannot go to
- * zero. It is also the only part of the prompt that is not cached, now that
- * everything static has been moved out of the way, which makes it the entire
- * per-turn variable cost.
- *
- * Twenty measured at about 1,700 tokens on every turn. Eight covers a session's
- * worth of back-and-forth for roughly 600, and anything older is reachable
- * through memory_search rather than lost.
+ * A turn used to call recall directly to build its own short window of
+ * continuity, which made this the entire per-turn variable cost. It no
+ * longer does -- the turn now replays the whole chat transcript instead, so
+ * recall's only caller left is the worker's exchange collector
+ * (memory/summarize.ts), gathering what a student said since it was last
+ * looked at. That caller asks for its own limit explicitly; this is just
+ * what recall falls back to if a future caller does not.
  */
 const DEFAULT_RECALL_LIMIT = 8;
 const DEFAULT_SUMMARY_LIMIT = 5;

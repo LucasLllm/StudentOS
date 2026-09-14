@@ -4,14 +4,11 @@ import type { Tool } from './types.js';
 /**
  * Looking things up in the agent's own history.
  *
- * Every turn carries a short window of recent exchanges, and that window is
- * the only part of the prompt still paid for in full -- everything static now
- * sits in a cached prefix. Shrinking the window is therefore the cheapest
- * saving available, but shrinking it alone would just make the agent forget
- * things a student told it last week.
- *
- * This is the other half of that trade. The window covers continuity; this
- * covers recall, on demand, and costs nothing on turns that do not need it.
+ * A turn now replays the whole chat transcript, so it already has this
+ * conversation in front of it without calling anything. What that replay
+ * cannot hold is everything said in earlier conversations, so this is how
+ * the agent reaches back beyond the current chat -- searched on demand, and
+ * costing nothing on a turn that does not need it.
  */
 
 const inputSchema = z.object({

@@ -32,9 +32,9 @@ export const openVaultDocument: Tool<z.infer<typeof inputSchema>, string> = {
     'Open one of the pages written about this student: a class of theirs, their school, ' +
     'or a digest of what they have told you before; their own words are memory_search. ' +
     'The page you were given names them in [[double ' +
-    'brackets]] -- pass what is inside the brackets. Reach for this before answering ' +
-    'anything specific about a subject they take, how their school works, or what they ' +
-    'have already said, rather than answering from the summary alone.',
+    'brackets]] -- pass what is inside the brackets. Reach for this when a question is about ' +
+    'a subject they take, how their school works, or what they have already said, rather ' +
+    'than answering from the summary alone.',
   inputSchema,
   async execute(input, ctx) {
     if (!ctx.vault) {

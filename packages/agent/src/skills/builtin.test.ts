@@ -105,6 +105,15 @@ describe('the skills block', () => {
     expect(skillsSection({ hasVault: true })).toMatch(/needs none of them/i);
   });
 
+  it('says many turns need one rather than most, so it does not contradict "needs none"', () => {
+    // "Most turns need one" reads as an expectation to load something on
+    // nearly every turn, which fights the sentence right before it that says
+    // a question none of them covers needs none of them.
+    const block = skillsSection({ hasVault: true });
+    expect(block).toMatch(/many turns need one/i);
+    expect(block).not.toContain('Most turns need one');
+  });
+
   it('is byte-identical for the same situation', () => {
     expect(skillsSection({ hasVault: true })).toBe(skillsSection({ hasVault: true }));
   });
