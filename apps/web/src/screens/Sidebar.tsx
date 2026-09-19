@@ -12,8 +12,6 @@ import { LogoMark } from './LogoMark.js';
 
 interface Props {
   route: Route;
-  /** Whether the open chat's agent is mid-turn, so the mark can fold. */
-  working: boolean;
   /** The signed-in student, for the footer. Either may be missing. */
   name?: string | null;
   email?: string | null;
@@ -29,7 +27,7 @@ interface Props {
  * the idea that you build an agent before you can talk to one: New opens a
  * chat, and the agent behind it is plumbing the student never meets.
  */
-export function Sidebar({ route, working, name, email, onOpenSettings }: Props) {
+export function Sidebar({ route, name, email, onOpenSettings }: Props) {
   const theme = useResolvedTheme();
   const [chats, setChats] = useState<Agent[] | null>(null);
   /** Which row's menu is open. Only ever one. */
@@ -111,7 +109,7 @@ export function Sidebar({ route, working, name, email, onOpenSettings }: Props) 
         aria-label="Contexto Agent"
         onClick={() => go({ name: 'new' })}
       >
-        <LogoMark size={30} working={working} />
+        <LogoMark size={30} working={false} />
         <img
           className="sidebar-wordmark"
           src={theme === 'dark' ? '/wordmark-dark.png' : '/wordmark.png'}

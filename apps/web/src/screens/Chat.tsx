@@ -15,7 +15,6 @@ import type { Attachment as AttachmentItem } from '../lib/attachments.js';
 import { AttachButton, AttachedFiles } from './AttachButton.js';
 import { LogoMark } from './LogoMark.js';
 import { SkillsRead } from './SkillsRead.js';
-import { useReportWorking } from '../lib/working.js';
 import { activityKey, pickPhrase } from '../lib/thinkingPhrases.js';
 
 interface Props {
@@ -225,7 +224,6 @@ export function Chat({ agentId }: Props) {
    * page started; `pending` is one it found already running.
    */
   const working = sending || pending;
-  useReportWorking(working);
 
   /*
    * What the line says, and when it changes.

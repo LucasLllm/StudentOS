@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './lib/api.js';
 import { desktop } from './lib/desktop.js';
 import { MAC_DOWNLOAD } from './lib/download.js';
 import { navigate, useRoute } from './lib/router.js';
 import { signInWithGoogle, useSession } from './lib/auth.js';
 import { applyAppearance, useResolvedTheme, type Appearance } from './lib/theme.js';
-import { WorkingProvider } from './lib/working.js';
 import { Chat } from './screens/Chat.js';
 import { NewChat } from './screens/NewChat.js';
 import { Sidebar } from './screens/Sidebar.js';
@@ -16,12 +15,6 @@ export function App() {
   const { data: session, isPending } = useSession();
   const theme = useResolvedTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /*
-   * Set by whichever screen is open. Only the sidebar reads it, and only to
-   * decide whether its mark is folding.
-   */
-  const [working, setWorking] = useState(false);
-  const report = useCallback((next: boolean) => setWorking(next), []);
   // View state lives in the URL now, so refresh and Back both behave.
   const route = useRoute();
   /*
@@ -139,93 +132,90 @@ export function App() {
   }
 
   return (
-    <WorkingProvider value={report}>
-      <div className="app">
-        <Sidebar
-          route={route}
-          working={working}
-          name={preferred ?? session.user.name}
-          email={session.user.email}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
+    <div className="app">
+      <Sidebar
+        route={route}
+        name={preferred ?? session.user.name}
+        email={session.user.email}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
-        {/*
-          The scrim, and the only thing that closes the drawer by tapping away
-          from it. Present at every width; it has no size until the drawer is
-          a drawer.
-        */}
-        <div
-          className="nav-scrim"
-          onClick={() => document.body.classList.remove('nav-open')}
-          aria-hidden="true"
-        />
+      {/*
+        The scrim, and the only thing that closes the drawer by tapping away
+        from it. Present at every width; it has no size until the drawer is
+        a drawer.
+      */}
+      <div
+        className="nav-scrim"
+        onClick={() => document.body.classList.remove('nav-open')}
+        aria-hidden="true"
+      />
 
-        {/*
-          Centred for settings too: the new-chat screen stays mounted behind
-          the window, and dropping the class dropped it into the corner.
-        */}
-        <main
-          className={
-            route.name === 'new' || route.name === 'settings' ? 'app-main is-new' : 'app-main'
-          }
+      {/*
+        Centred for settings too: the new-chat screen stays mounted behind
+        the window, and dropping the class dropped it into the corner.
+      */}
+      <main
+        className={
+          route.name === 'new' || route.name === 'settings' ? 'app-main is-new' : 'app-main'
+        }
+      >
+        <button
+          className="nav-toggle"
+          aria-label="Chats"
+          onClick={() => document.body.classList.toggle('nav-open')}
         >
-          <button
-            className="nav-toggle"
-            aria-label="Chats"
-            onClick={() => document.body.classList.toggle('nav-open')}
-          >
-            <span />
-          </button>
-
-          {/*
-            Settings opens over whatever you were doing rather than replacing
-            it, so the new-chat screen stays mounted behind the window.
-          */}
-          {(route.name === 'new' || route.name === 'settings') && (
-            <NewChat name={preferred ?? session.user.name} />
-          )}
-
-          {route.name === 'chat' && (
-            /*
-             * Keyed, so moving between conversations builds a new one rather than
-             * repainting the old.
-             *
-             * Without it React kept a single Chat and only swapped the prop, so
-             * everything it was holding came along: a reply still in flight landed
-             * in whichever conversation was open by the time it arrived, the
-             * composer stayed disabled because some other chat was mid-turn, and a
-             * half-typed message followed you into a different agent. A
-             * conversation is not a repaint of another one.
-             */
-            <Chat key={route.agentId} agentId={route.agentId} />
-          )}
-
-          {route.name === 'link' && <LinkDevice requestId={route.requestId} />}
-
-          {route.name === 'notFound' && (
-            <div className="panel">
-              <p>There&apos;s nothing at this address.</p>
-              <button onClick={() => navigate({ name: 'new' })}>Start a new chat</button>
-            </div>
-          )}
-        </main>
+          <span />
+        </button>
 
         {/*
-          A window over wherever you are, not a place you go: opened from the
-          rail it changes nothing behind it, and closing it leaves you where
-          you were. /settings still works as an address -- the link screen
-          sends people there -- and then there is nothing behind it but the
-          new-chat screen, so closing goes there.
+          Settings opens over whatever you were doing rather than replacing
+          it, so the new-chat screen stays mounted behind the window.
         */}
-        {(settingsOpen || route.name === 'settings') && (
-          <Settings
-            onClose={() => {
-              setSettingsOpen(false);
-              if (route.name === 'settings') navigate({ name: 'new' });
-            }}
-          />
+        {(route.name === 'new' || route.name === 'settings') && (
+          <NewChat name={preferred ?? session.user.name} />
         )}
-      </div>
-    </WorkingProvider>
+
+        {route.name === 'chat' && (
+          /*
+           * Keyed, so moving between conversations builds a new one rather than
+           * repainting the old.
+           *
+           * Without it React kept a single Chat and only swapped the prop, so
+           * everything it was holding came along: a reply still in flight landed
+           * in whichever conversation was open by the time it arrived, the
+           * composer stayed disabled because some other chat was mid-turn, and a
+           * half-typed message followed you into a different agent. A
+           * conversation is not a repaint of another one.
+           */
+          <Chat key={route.agentId} agentId={route.agentId} />
+        )}
+
+        {route.name === 'link' && <LinkDevice requestId={route.requestId} />}
+
+        {route.name === 'notFound' && (
+          <div className="panel">
+            <p>There&apos;s nothing at this address.</p>
+            <button onClick={() => navigate({ name: 'new' })}>Start a new chat</button>
+          </div>
+        )}
+      </main>
+
+      {/*
+        A window over wherever you are, not a place you go: opened from the
+        rail it changes nothing behind it, and closing it leaves you where
+        you were. /settings still works as an address -- the link screen
+        sends people there -- and then there is nothing behind it but the
+        new-chat screen, so closing goes there.
+      */}
+      {(settingsOpen || route.name === 'settings') && (
+        <Settings
+          onClose={() => {
+            setSettingsOpen(false);
+            if (route.name === 'settings') navigate({ name: 'new' });
+          }}
+        />
+      )}
+    </div>
   );
 }

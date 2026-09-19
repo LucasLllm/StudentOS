@@ -7,8 +7,8 @@ import { CUES, Easing, LOOP_SECONDS, REVERSE_AT, animate, authoredTime } from '.
  *
  * Whole and still when there is nothing to say, and folding when there is:
  * one mark that comes alive rather than a separate spinner appearing beside
- * it. It is the same gesture in the header and in the conversation, at two
- * sizes, so a student only has to learn it once.
+ * it. Only the copy in the conversation folds; the one in the rail stays
+ * whole, so the corner of the screen is not moving while a student reads.
  *
  * The geometry below is measured, not derived -- each fold axis is the
  * perpendicular bisector between a piece and the spot it lands on, taken off

@@ -76,17 +76,24 @@ describe('the rail', () => {
   async function show(name?: string | null, email?: string | null) {
     await act(async () => {
       root.render(
-        <Sidebar
-          route={{ name: 'new' }}
-          working={false}
-          onOpenSettings={() => {}}
-          name={name}
-          email={email}
-        />,
+        <Sidebar route={{ name: 'new' }} onOpenSettings={() => {}} name={name} email={email} />,
       );
     });
     await settle();
   }
+
+  it('keeps its mark still', async () => {
+    /*
+     * The mark folds beside an answer in the conversation, not in the corner
+     * of every screen. A rail that never asks for a frame is a rail whose
+     * mark is not moving.
+     */
+    const frame = vi.fn(() => 0);
+    vi.stubGlobal('requestAnimationFrame', frame);
+    await show('Lucas');
+    expect(container.querySelector('.sidebar-brand .logo-mark')).not.toBeNull();
+    expect(frame).not.toHaveBeenCalled();
+  });
 
   it('lists the chats the server returned', async () => {
     await show('Lucas');
@@ -101,12 +108,7 @@ describe('the rail', () => {
   it('marks the screen you are on', async () => {
     await act(async () => {
       root.render(
-        <Sidebar
-          route={{ name: 'chat', agentId: 'a2' }}
-          working={false}
-          onOpenSettings={() => {}}
-          name="Lucas"
-        />,
+        <Sidebar route={{ name: 'chat', agentId: 'a2' }} onOpenSettings={() => {}} name="Lucas" />,
       );
     });
     await settle();
@@ -147,7 +149,6 @@ describe('the rail', () => {
       root.render(
         <Sidebar
           route={{ name: 'chat', agentId: 'a2' }}
-          working={false}
           name="Lucas"
           onOpenSettings={onOpenSettings}
         />,
@@ -224,9 +225,7 @@ describe('what a chat row can do', () => {
   async function railWith(...rows: Parameters<typeof listing>) {
     vi.stubGlobal('fetch', listing(...rows));
     await act(async () => {
-      root.render(
-        <Sidebar route={{ name: 'new' }} working={false} onOpenSettings={() => {}} name="Lucas" />,
-      );
+      root.render(<Sidebar route={{ name: 'new' }} onOpenSettings={() => {}} name="Lucas" />);
     });
     await settle();
   }
@@ -292,9 +291,7 @@ describe('what a chat row can do', () => {
         ),
     );
     await act(async () => {
-      root.render(
-        <Sidebar route={{ name: 'new' }} working={false} onOpenSettings={() => {}} name="Lucas" />,
-      );
+      root.render(<Sidebar route={{ name: 'new' }} onOpenSettings={() => {}} name="Lucas" />);
     });
     await settle();
     expect(text('.sidebar-chat-open')).toEqual(['No flags']);
