@@ -133,3 +133,23 @@ needle 100%   goal 100%   tool-recall 100%   cache 64%
 ```
 
 All three categories pass both arms.
+
+### Before and after
+
+Run on 19 September 2026, same model, same day, same graders. "Old" is the harness at `7099071`, the commit before this work: no transcript, no reasoning replay, no compaction, no plan; the eight most recent exchanges pasted into the turn context and `memory_search` over the rest. The three conversation cases and their graders were copied into a detached worktree at that commit and driven through its `runAgentTurn` three times. The goal case was graded on the reply alone there, because the plan-shape checks measure a tool the old harness did not have. "New" is `main` at `601fa1b`, run 7 of the eval as it ships.
+
+```
+CASE                   OLD 7099071, three runs          NEW 601fa1b, run 7
+needle-teacher         pass  pass  pass                 default pass   compacted pass
+goal-essay             pass  pass  pass                 default pass   compacted pass
+tool-recall-classroom  fail  fail  fail                 default pass   compacted pass
+
+old:  needle 100%   goal 100%   tool-recall 0%
+new:  needle 100%   goal 100%   tool-recall 100%   cache 66%   reasoning 53/53 turns   length 0
+```
+
+The old harness passed the first two by reaching for `memory_search` on one or two turns per conversation and finding the fact or the essay. Its tool-recall reply was the same all three runs: "I couldn't access Classroom just now, so I can't see what was due. Send me a screenshot…" -- the result read on turn three was gone at the end of that turn, `memory.record` kept only the student's and agent's text, and the tool would not answer twice.
+
+Memory eval, same day: old 19/19 search only and 18/19 with a profile (`revision-habit`, the same miss as on `main`); new 19/19, 19/19, and 18/19 compacted (one abstention case). The old harness reached for `memory_search` on 14 of 19 questions, the new one on 3: it answers from the transcript instead of searching for it.
+
+What this does and does not show. On these scripted conversations the old harness already recovered a stated fact and an interrupted goal, because the model chose to search and the search found them. The measured retention gain is tool results, which the old harness discarded at the end of every turn and could not search for. Not measured here: the quality of the answers in between (the graders check words, not the outline), or what carrying reasoning across turns is worth. The old harness's cache ratio (0.76 to 0.90) is not comparable: its prompts were a few thousand tokens, most of them the system prompt.
