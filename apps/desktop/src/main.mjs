@@ -553,7 +553,22 @@ async function ensureSession() {
   }
 }
 
+/*
+ * One copy at a time.
+ *
+ * Two copies of the app -- one in Applications, one wherever a build or a
+ * mounted installer left it -- each open a window, each poll for work, and
+ * each put a browser on screen, and the student sees two of everything with
+ * no way to tell which is which. The second to start hands over to the first
+ * and quits, and the first comes to the front, which is what opening it
+ * meant.
+ */
+const onlyCopy = app.requestSingleInstanceLock();
+if (!onlyCopy) app.quit();
+app.on('second-instance', () => showWindow());
+
 void app.whenReady().then(async () => {
+  if (!onlyCopy) return;
   observeSessions({ open: attachSiteView, close: markSiteViewIdle });
   attachSession();
   await ensureSession();

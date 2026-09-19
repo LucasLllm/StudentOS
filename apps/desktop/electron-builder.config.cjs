@@ -28,6 +28,7 @@ if (!canNotarize) {
 }
 
 const { execFileSync } = require('node:child_process');
+const { rmSync } = require('node:fs');
 const { join } = require('node:path');
 
 /**
@@ -56,8 +57,25 @@ function adHocSign(context) {
   console.log('[desktop] ad-hoc signed', appPath);
 }
 
+/**
+ * Leave only the DMG behind.
+ *
+ * The DMG is built from an unpacked copy of the app, and left where it was
+ * that copy is a real, launchable application sitting inside the repo.
+ * Spotlight indexes it, Launchpad lists it beside the installed one, and
+ * opening "ContextoAgent" from either can start it instead -- so a developer
+ * ends up with two apps, and the one running is not the one they installed.
+ * Measured, more than once. The installed copy is the one to run; this is
+ * what makes it the only one.
+ */
+function dropUnpackedApp() {
+  rmSync(join(__dirname, 'release', 'mac-arm64'), { recursive: true, force: true });
+  console.log('[desktop] removed the unpacked app; install from the DMG in release/');
+}
+
 module.exports = {
   afterPack: adHocSign,
+  afterAllArtifactBuild: dropUnpackedApp,
   appId: 'ai.contextoagent.desktop',
   productName: 'ContextoAgent',
   directories: { output: 'release', buildResources: 'build' },

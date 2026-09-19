@@ -91,7 +91,9 @@ xattr -dr com.apple.quarantine /Applications/ContextoAgent.app
 
 Building it yourself avoids all of this: an app built locally never gets the
 quarantine flag that triggers the check, so `pnpm --filter @contexto/desktop
-dist` and running it from `release/` just works.
+dist` and installing from the DMG in `release/` just works. The build keeps
+only the DMG. An unpacked app left in the repo is a second application as far
+as Spotlight and Launchpad are concerned, and the one that ends up running.
 
 ### If you do enrol later
 
@@ -103,7 +105,7 @@ export APPLE_API_KEY=~/private_keys/AuthKey_XXXXXXXXXX.p8
 export APPLE_API_KEY_ID=XXXXXXXXXX
 export APPLE_API_ISSUER=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
 pnpm --filter @contexto/desktop dist
-spctl -a -vvv -t install release/mac-arm64/ContextoAgent.app   # expect "accepted"
+spctl -a -vvv -t install /Applications/ContextoAgent.app   # once installed; expect "accepted"
 ```
 
 The certificate must be **Developer ID Application**. "Apple Distribution" is
