@@ -11,6 +11,7 @@ import { PortalBrowser } from './browser.mjs';
 import { fillScript, explainFailure, INSPECT_SCRIPT } from './sign-in.mjs';
 import { readCredentials, saveCredentials } from './credentials.mjs';
 import { explore } from './explorer.mjs';
+import { ActionError, SNAPSHOT_SCRIPT, performAction } from './page-actions.mjs';
 import { DeviceUnlinked, pushSnapshot, readConfig, writeConfig } from './sync.mjs';
 
 /**
@@ -190,6 +191,31 @@ export async function addSiteWithSignIn({ name, url, username, password }) {
 }
 
 /**
+ * The page the agent last left open, if it is still there.
+ *
+ * Held so the next step can land on it. Gone once a sync or a different site
+ * has replaced it, or the window took it down -- and then the agent has to
+ * open a page before it can do anything to one.
+ */
+let current = null;
+
+function pageLeftOpen() {
+  const page = current;
+  if (!page?.view || !page.webContents || page.webContents.isDestroyed()) {
+    current = null;
+    return null;
+  }
+  return page;
+}
+
+/** Pick a page the agent left open back up, and show it as working again. */
+function resumeBrowser(session) {
+  session.attach();
+  onSessionOpen?.(session);
+  return session;
+}
+
+/**
  * Open one page and read it back.
  *
  * Ordinary browsing, in the same browser that signs into the student's sites.
@@ -204,22 +230,51 @@ export async function browsePage(url) {
   // general profile, kept apart from every site the student signed into.
   const partition = site ? site.id : 'agent-browsing';
 
-  const browser = await openBrowser(partition);
+  /*
+   * The same page, when it is the same conversation on the same site.
+   *
+   * Following a link the agent was just looking at replaces nothing: the
+   * view the student is watching goes where it was told, the way their own
+   * browser would. A different site needs its own store, and a different
+   * conversation gets a view of its own.
+   */
+  const open = pageLeftOpen();
+  const same =
+    open && showsInChat(open) && open.portalId === partition && open.agentId === workingForAgent;
+  const browser = same ? resumeBrowser(open) : await openBrowser(partition);
+  current = browser.view ? browser : null;
   try {
     await browser.openPage(target.toString());
     // Give a page that builds itself a moment to do so.
     await new Promise((r) => setTimeout(r, 2500));
-    const read = await evaluate(
-      browser,
-      `JSON.stringify({
-        url: location.href,
-        title: document.title,
-        text: document.body ? document.body.innerText.slice(0, 20000) : '',
-        links: Array.from(document.querySelectorAll('a[href]')).map((a) => a.href).slice(0, 80)
-      })`,
-    );
+    const read = await evaluate(browser, SNAPSHOT_SCRIPT);
     await browser.close();
     return JSON.parse(read);
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Do one thing to the page the agent has open, and read it back.
+ *
+ * Only the page this conversation opened. Another conversation's page is on
+ * screen somewhere else and belongs to whoever asked for it; acting on it
+ * from here would be doing one student's work in another's window.
+ */
+export async function actOnPage(action) {
+  const page = pageLeftOpen();
+  if (!page || !showsInChat(page) || page.agentId !== workingForAgent) {
+    throw new ActionError(
+      'There is no page open in this conversation. Open one with browser_open first.',
+    );
+  }
+  const browser = resumeBrowser(page);
+  try {
+    const read = await performAction(browser, action);
+    await browser.close();
+    return read;
   } catch (error) {
     await browser.close().catch(() => {});
     throw error;

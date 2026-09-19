@@ -48,6 +48,7 @@ describe('reading the theme off what the agent is doing', () => {
     ['youtube_video_details', 'reading'],
     ['portal_read', 'browsing'],
     ['browser_open', 'browsing'],
+    ['browser_act', 'browsing'],
     ['vault_write', 'writing'],
   ])('reads %s as %s', (name, theme) => {
     expect(themeFor({ kind: 'tool', name })).toBe(theme);

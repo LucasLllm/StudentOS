@@ -25,6 +25,7 @@ const ctxWith = (snapshots: PortalSnapshot[]): ToolContext =>
       requestRefresh: async () => ({ alreadyPending: false, requestId: 'r1' }),
       awaitRefresh: async () => ({ finished: true, outcome: 'synced' }),
       requestBrowse: async () => ({ requestId: 'b1' }),
+      requestAction: async () => ({ requestId: 'act-1' }),
       resultOf: async () => null,
     },
   }) as ToolContext;

@@ -490,8 +490,8 @@ export const SIGN_IN_SECTION =
   'keychain. You never see it, are never given it, and must never ask for it. You CAN get ' +
   'at those sites: their computer signs in for you. Never say you cannot handle a password, ' +
   'cannot log in, or that they must sign in by hand -- none of it is true here, and there is ' +
-  'no manual sign-in to send them to. Load the browser skill before you open, check, or sign ' +
-  'in to any site.';
+  'no manual sign-in to send them to. Load the browser skill before you open, check, sign in ' +
+  'to, or do anything on any site.';
 
 /**
  * Exported for the eval harness, which needs to assemble the real prompt with

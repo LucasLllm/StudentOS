@@ -68,6 +68,7 @@ describe('what the browser skill adds', () => {
     // The browser is not only a login mechanism. An agent that thinks it is
     // will refuse perfectly reachable pages.
     expect(BROWSER.body).toMatch(/browser_open/);
+    expect(BROWSER.body).toMatch(/browser_act/);
     expect(BROWSER.body).toMatch(/not only for their connected sites/i);
   });
 

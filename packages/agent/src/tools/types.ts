@@ -117,6 +117,24 @@ export interface PortalSnapshot {
   pages: PortalPage[];
 }
 
+/**
+ * One thing to do on the page the agent has open.
+ *
+ * Checked at the tool, where the model's call is parsed, and again on the
+ * computer that carries it out; this is only the shape that travels between
+ * the two.
+ */
+export interface BrowserAction {
+  action: 'click' | 'type' | 'press' | 'select' | 'scroll' | 'back' | 'look';
+  /** The number of the element, from the last reading of the page. */
+  ref?: number;
+  text?: string;
+  submit?: boolean;
+  key?: string;
+  value?: string;
+  direction?: 'down' | 'up' | 'top' | 'bottom';
+}
+
 export interface PortalSnapshotSource {
   /** Latest snapshot per portal, most recently captured first. */
   latest(userId: string): Promise<PortalSnapshot[]>;
@@ -151,6 +169,18 @@ export interface PortalSnapshotSource {
    * real browser -- and because they can watch it.
    */
   requestBrowse(userId: string, url: string, agentId?: string): Promise<{ requestId?: string }>;
+  /**
+   * Ask the student's computer to do one thing on the page it has open.
+   *
+   * The same browser, the same view the student is watching, one step on: a
+   * click, some typing, a choice from a list. What comes back is the page as
+   * it stands afterwards, read the way a browse reads it.
+   */
+  requestAction(
+    userId: string,
+    action: BrowserAction,
+    agentId?: string,
+  ): Promise<{ requestId?: string }>;
   /** What a finished request returned, if it returned anything. */
   resultOf(requestId: string): Promise<unknown>;
 }

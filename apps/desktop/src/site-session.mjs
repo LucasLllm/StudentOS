@@ -57,12 +57,38 @@ export class SiteSession {
     });
 
     const wc = this.webContents;
-    wc.debugger.attach('1.3');
-    this.attached = true;
-
+    /*
+     * A link that wants a new window opens here instead. There is one view
+     * per session, and it is the one the student is watching; a page that
+     * appeared in a window of its own would be neither.
+     */
+    wc.setWindowOpenHandler(({ url }) => {
+      void wc.loadURL(url);
+      return { action: 'deny' };
+    });
+    // Once, for the life of the view. Attaching again later must not add a
+    // second copy, or every event would be handled twice.
     wc.debugger.on('message', (_event, method, params) => {
       for (const handler of this.listeners.get(method) ?? []) handler(params);
     });
+    this.attach();
+    return this;
+  }
+
+  /**
+   * Take the protocol connection back on a page that was left open.
+   *
+   * The page stays on screen after the agent's step ends, released rather
+   * than closed, so the next step can pick it up where it was left -- a
+   * click, then a look, then typing, all on the one page the student is
+   * watching. Nothing to do if it is already held.
+   */
+  attach() {
+    const wc = this.webContents;
+    if (!wc) throw new Error('This session is not open.');
+    if (this.attached) return;
+    wc.debugger.attach('1.3');
+    this.attached = true;
 
     this.cdp = {
       send: async (method, params = {}) => wc.debugger.sendCommand(method, params),
@@ -76,8 +102,6 @@ export class SiteSession {
         };
       },
     };
-
-    return this;
   }
 
   /** Matches the shape the explorer already calls. */
@@ -127,7 +151,8 @@ export class SiteSession {
    * vanishes the moment it stops takes the evidence with it, and "what did it
    * actually read" is a fair question after the fact as well as during. The
    * protocol connection is always released -- nothing is driving it any more
-   * -- but the view stays until something replaces it.
+   * -- but the view stays until something replaces it, or the agent's next
+   * step attaches to it again.
    */
   async close() {
     if (!this.view) return;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { browseWithAgent, condense, readSchoolPortal, refreshSchoolPortal } from './portal.js';
+import { condense, readSchoolPortal, refreshSchoolPortal } from './portal.js';
+import { browseWithAgent } from './browser.js';
 import type { PortalSnapshot, ToolContext } from './types.js';
 
 const ctxWith = (snapshots: PortalSnapshot[]): ToolContext =>
@@ -11,6 +12,7 @@ const ctxWith = (snapshots: PortalSnapshot[]): ToolContext =>
       requestRefresh: async () => ({ alreadyPending: false, requestId: 'r1' }),
       awaitRefresh: async () => ({ finished: true, outcome: 'synced' }),
       requestBrowse: async () => ({ requestId: 'b1' }),
+      requestAction: async () => ({ requestId: 'act-1' }),
       resultOf: async () => null,
     },
   }) as ToolContext;
@@ -148,6 +150,7 @@ describe('what the read tool says when a site needs signing in', () => {
         requestRefresh: async () => ({ alreadyPending: false, requestId: 'r1' }),
         awaitRefresh: async () => ({ finished: true, outcome: 'synced' }),
         requestBrowse: async () => ({ requestId: 'b1' }),
+        requestAction: async () => ({ requestId: 'act-1' }),
         resultOf: async () => null,
       },
     } as unknown as ToolContext;
@@ -172,6 +175,7 @@ describe('what a successful browse tells the model', () => {
         requestRefresh: async () => ({ alreadyPending: false, requestId: 'r1' }),
         awaitRefresh: async () => ({ finished: true, outcome: 'read' }),
         requestBrowse: async () => ({ requestId: 'b1' }),
+        requestAction: async () => ({ requestId: 'act-1' }),
         resultOf: async () => result,
       },
     }) as unknown as ToolContext;

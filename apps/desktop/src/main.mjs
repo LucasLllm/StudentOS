@@ -16,6 +16,7 @@ import {
   saveCredentials,
 } from './credentials.mjs';
 import {
+  actOnPage,
   autoSignIn,
   addSiteWithSignIn,
   observeSessions,
@@ -26,6 +27,7 @@ import {
   status,
   syncPortal,
 } from './operations.mjs';
+import { ActionError } from './page-actions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const API_BASE = process.env['CONTEXTO_API'] ?? 'https://contextoagent.ai';
@@ -401,12 +403,18 @@ async function doPendingWork() {
       if (item.kind === 'browse') {
         result = await browsePage(item.targetUrl);
         outcome = 'read';
+      } else if (item.kind === 'act') {
+        result = await actOnPage(item.payload ?? {});
+        outcome = 'read';
       } else {
         const synced = await syncPortal(item.portalId);
         outcome = synced.needsLogin ? 'needs_login' : 'synced';
       }
-    } catch {
+    } catch (error) {
       outcome = 'failed';
+      // Only a reason this app wrote itself travels back. Anything else could
+      // be carrying the page's own words, and the page is not to be trusted.
+      if (error instanceof ActionError) result = { reason: error.message };
     }
     setWorkingForAgent(null);
     await reportWork(creds, item.id, outcome, result).catch(() => {});

@@ -440,6 +440,7 @@ function fakePortals(): PortalSnapshotSource {
     latest: async () => [snapshot],
     requestRefresh: async () => ({ alreadyPending: false, requestId: 'refresh-1' }),
     requestBrowse: async () => ({ requestId: 'browse-1' }),
+    requestAction: async () => ({ requestId: 'act-1' }),
     awaitRefresh: async (requestId) => ({
       finished: true,
       outcome: requestId.startsWith('browse') ? 'read' : 'synced',

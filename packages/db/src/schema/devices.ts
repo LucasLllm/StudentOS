@@ -144,11 +144,17 @@ export const siteRefreshRequests = pgTable(
      *
      * 'refresh' signs into a configured site and reads it. 'browse' opens one
      * page and reads it back -- the same browser, doing ordinary work, which
-     * is why the student sees it either way.
+     * is why the student sees it either way. 'act' does one thing on the page
+     * the last browse left open -- a click, some typing -- and reads it again.
      */
     kind: text('kind').notNull().default('refresh'),
     /** The page to open, for a browse. */
     targetUrl: text('target_url'),
+    /**
+     * What to do on the page, for an act: the action and what it aims at.
+     * Opaque here; checked by the agent that wrote it and the app that does it.
+     */
+    payload: jsonb('payload'),
     /**
      * What came back. Kept on the request rather than in portal_snapshots
      * because a one-off page is not a site the student has connected, and

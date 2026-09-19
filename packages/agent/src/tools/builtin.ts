@@ -28,7 +28,8 @@ import {
   sendMail,
   trashMail,
 } from './google/gmail.js';
-import { browseWithAgent, readSchoolPortal, refreshSchoolPortal } from './portal.js';
+import { readSchoolPortal, refreshSchoolPortal } from './portal.js';
+import { actInBrowser, browseWithAgent } from './browser.js';
 import { searchMemory } from './memory.js';
 import { updatePlan } from './plan.js';
 import { loadSkill } from './skills.js';
@@ -70,6 +71,7 @@ const ALL_TOOLS: Tool<never, unknown>[] = [
   readSchoolPortal,
   refreshSchoolPortal,
   browseWithAgent,
+  actInBrowser,
 ] as unknown as Tool<never, unknown>[];
 
 /**

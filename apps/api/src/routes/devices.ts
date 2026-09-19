@@ -300,6 +300,7 @@ export function createDeviceRoutes(ctx: AppContext) {
             portalId: siteRefreshRequests.portalId,
             kind: siteRefreshRequests.kind,
             targetUrl: siteRefreshRequests.targetUrl,
+            payload: siteRefreshRequests.payload,
             agentId: siteRefreshRequests.agentId,
           })
           .from(siteRefreshRequests)

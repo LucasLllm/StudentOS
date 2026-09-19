@@ -511,6 +511,25 @@ describe('the agent browsing anything', () => {
     expect(result.note).toMatch(/asleep or shut/i);
   });
 
+  it('hands an action to the device with what to do on the page', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    await new DbPortalSnapshots(db).requestAction(alice.id, {
+      action: 'type',
+      ref: 2,
+      text: 'chem',
+    });
+
+    const work = (await (
+      await app.request('/api/devices/pending', {
+        headers: { Authorization: `Bearer ${device.token}` },
+      })
+    ).json()) as { kind: string; payload: unknown }[];
+    expect(work.map((w) => [w.kind, w.payload])).toEqual([
+      ['act', { action: 'type', ref: 2, text: 'chem' }],
+    ]);
+  });
+
   it("never hands one student's browsing to another's device", async () => {
     const alice = await createUser();
     const bob = await createUser();

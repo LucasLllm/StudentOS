@@ -1,0 +1,1 @@
+ALTER TABLE "site_refresh_requests" ADD COLUMN "payload" jsonb;

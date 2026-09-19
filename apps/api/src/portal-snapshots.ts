@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, isNull, notInArray } from 'drizzle-orm';
 import type { Database } from '@contexto/db';
 import { disabledSites, portalSnapshots, siteRefreshRequests } from '@contexto/db';
-import type { PortalSnapshot, PortalSnapshotSource } from '@contexto/agent';
+import type { BrowserAction, PortalSnapshot, PortalSnapshotSource } from '@contexto/agent';
 
 /**
  * The latest map of each portal a student's devices have captured.
@@ -79,6 +79,19 @@ export class DbPortalSnapshots implements PortalSnapshotSource {
       // portalId is empty for a one-off page: it names a configured site, and
       // this is not one.
       .values({ userId, portalId: '', kind: 'browse', targetUrl: url, agentId: tag })
+      .returning({ id: siteRefreshRequests.id });
+    return { requestId: created?.id };
+  }
+
+  async requestAction(
+    userId: string,
+    action: BrowserAction,
+    agentId?: string,
+  ): Promise<{ requestId?: string }> {
+    const tag = isUuid(agentId) ? agentId : null;
+    const [created] = await this.db
+      .insert(siteRefreshRequests)
+      .values({ userId, portalId: '', kind: 'act', payload: action, agentId: tag })
       .returning({ id: siteRefreshRequests.id });
     return { requestId: created?.id };
   }
