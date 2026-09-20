@@ -5,29 +5,23 @@ import { useAgentSession } from '../lib/useAgentSession.js';
 /**
  * The browser the agent is driving, sitting in the conversation.
  *
- * It lives in the message column rather than floating in a corner: the work
- * belongs to this exchange, and something hovering over the app reads as
- * having happened to the student rather than been asked for by them.
+ * The live browser is a native view the app draws, and a native view always
+ * paints on top of this page -- it cannot be blurred, scrolled under, or
+ * covered by a dialog. Shown inline it therefore sat over the composer, the
+ * scroll-down button and the delete-chat dialog, and never faded with the
+ * transcript. So inline it is not shown at all.
  *
- * The frame is drawn here and the real browser is a native view the app
- * positions inside it -- a native view cannot take a CSS aura, and CSS cannot
- * render another site. So this owns where it sits; the app owns what is in
- * it, which is also why bounds are pushed on every layout change.
+ * Instead the conversation holds an ordinary card: a real element that scrolls,
+ * fades under the composer and sits beneath every dialog, exactly like the
+ * text around it. The card cannot be typed or clicked into, which is the point
+ * -- the page is the agent's to drive, not the student's to poke at over its
+ * shoulder. Opening it is a deliberate act.
  *
- * That native view is drawn over this page, not under it, which decides the
- * whole layout: anything the student needs to see or press has to live
- * outside the rectangle handed to it. Hence the bar. A close button placed on
- * top of the frame is behind the site and might as well not exist.
- *
- * Clicking the page opens it, and only opens it. Nothing says so, because a
- * browser that grows when you press it does not need a label explaining that
- * it will -- but a browser that shrinks when you press it is just broken, so
- * the close button is the only way back.
- *
- * It stays after the work finishes, without the aura. The page the agent
- * ended on is the evidence of what it did, and a browser that vanishes with
- * the spinner takes that with it -- but a glow on something no longer
- * happening would be saying something untrue.
+ * The card makes that act obvious: it carries an Open control, and on hover it
+ * lifts and grows the way anything that enlarges when pressed does. Opening it
+ * raises the live native view as an overlay, where being on top is exactly
+ * what a full-screen browser should be, and there is nothing behind it to
+ * overlap.
  */
 export function AgentSession({ agentId, working }: { agentId: string; working: boolean }) {
   const bridge = desktop();
@@ -40,6 +34,7 @@ export function AgentSession({ agentId, working }: { agentId: string; working: b
   const lit = active || working;
   const [expanded, setExpanded] = useState(false);
   const frame = useRef<HTMLDivElement>(null);
+  const site = portalId || 'a page';
 
   const report = useCallback(() => {
     if (!bridge?.setSiteViewBounds) return;
@@ -48,26 +43,23 @@ export function AgentSession({ agentId, working }: { agentId: string; working: b
     void bridge.setSiteViewBounds({ x: box.x, y: box.y, width: box.width, height: box.height });
   }, [bridge]);
 
-  useEffect(() => {
-    if (!showing) setExpanded(false);
-  }, [showing]);
-
   /*
-   * A click lands on the site, not on this page, so the view forwards it.
+   * The native view is placed on the window only while the browser is open.
    *
-   * It only ever opens. Toggling meant that once the browser was full-screen,
-   * every click on the page put it away again -- pressing a link, a search
-   * box, anything -- which makes an expanded browser impossible to actually
-   * use. Once it is open the clicks belong to the site; the way back out is
-   * the close button, which is why that button exists only while expanded.
+   * Closed, the view is hidden and the card stands in for it. The agent drives
+   * the hidden view just the same -- reading it, clicking and typing go through
+   * the debugger, which does not need the page on screen -- so nothing is lost
+   * by keeping it out of sight until the student asks to watch.
    */
   useEffect(() => {
-    const stop = bridge?.onSiteViewClick?.(() => setExpanded(true));
-    return () => stop?.();
-  }, [bridge]);
-
-  useEffect(() => {
     if (!showing) return;
+    if (!expanded) {
+      // Explicit, not merely "stop reporting": a previous open leaves the
+      // view somewhere, and only telling the app to hide it takes it back off
+      // the window.
+      void bridge?.setSiteViewBounds?.(null);
+      return;
+    }
     report();
     // A native view does not move with the document, so anything that changes
     // the layout has to push new bounds or the browser is left behind.
@@ -81,65 +73,100 @@ export function AgentSession({ agentId, working }: { agentId: string; working: b
     };
   }, [showing, expanded, bridge, report]);
 
+  // A panel that stops showing -- the work cleared, the conversation left --
+  // must not keep an expansion that would reopen onto nothing.
+  useEffect(() => {
+    if (!showing) setExpanded(false);
+  }, [showing]);
+
+  // Leaving the conversation puts the view away, so it does not hang over
+  // whatever the student goes to next.
   useEffect(() => {
     if (!showing) return;
-    /*
-     * Put the browser away when this panel goes -- leaving the conversation,
-     * or the work being cleared.
-     *
-     * This used to be left alone, because two panels were mounted at once
-     * while moving between conversations and the outgoing one's null landed
-     * last, blanking the incoming one. That only happened because work with
-     * no agent was shown in every chat; now that it is shown in none, one
-     * panel exists at a time and there is nothing to race with. Leaving the
-     * bounds behind is what let a browser sit over the Sites list, drawn
-     * where some conversation used to be.
-     *
-     * Kept apart from reporting so that expanding, which changes where the
-     * browser goes, does not blink it off and on along the way.
-     */
     return () => void bridge?.setSiteViewBounds?.(null);
   }, [showing, bridge]);
 
   if (!bridge || !showing) return null;
 
-  return (
-    <div className={`agent-browser${expanded ? ' expanded' : ''}${lit ? ' working' : ''}`}>
-      {/*
-        Above the page rather than over it. The native view covers every pixel
-        of the frame, so this strip is the only place a control can be both
-        seen and pressed.
-      */}
-      <div className="agent-browser-bar">
-        {/*
-          Only while expanded, because closing the expansion is all it does.
-          Sitting there beforehand, it was a button that did nothing.
-        */}
-        {expanded && (
-          <button
-            className="agent-browser-close"
-            onClick={() => setExpanded(false)}
-            aria-label="Close"
-          />
-        )}
-        <span className="agent-browser-label">
-          {portalId}
-          {lit && (
-            <span className="dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          )}
+  const label = (
+    <span className="agent-browser-label">
+      {portalId || 'Browser'}
+      {lit && (
+        <span className="dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
         </span>
-      </div>
+      )}
+    </span>
+  );
 
-      <div
-        className="agent-browser-frame"
-        ref={frame}
+  return (
+    <>
+      <button
+        type="button"
+        className={`agent-browser-card${lit ? ' working' : ''}`}
         onClick={() => setExpanded(true)}
-        role="presentation"
-      />
-    </div>
+        aria-label={`Open the browser on ${site}`}
+      >
+        <span className="agent-browser-bar">
+          <span className="agent-browser-chrome" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          {label}
+          <span className="agent-browser-open" aria-hidden="true">
+            Open
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M6 2H2v4M10 14h4v-4M14 2l-5 5M2 14l5-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </span>
+        <span className="agent-browser-preview">
+          <span className="agent-browser-preview-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <path
+                d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="agent-browser-preview-text">
+            {lit ? `Working in ${site}…` : 'Click to open'}
+          </span>
+        </span>
+      </button>
+
+      {expanded && (
+        <div className={`agent-browser-overlay${lit ? ' working' : ''}`}>
+          {/*
+            Above the page rather than over it. The native view covers every
+            pixel of the frame, so this strip is the only place a control can
+            be both seen and pressed.
+          */}
+          <div className="agent-browser-bar">
+            <button
+              className="agent-browser-close"
+              onClick={() => setExpanded(false)}
+              aria-label="Close"
+            />
+            {label}
+          </div>
+          <div className="agent-browser-frame" ref={frame} />
+        </div>
+      )}
+    </>
   );
 }

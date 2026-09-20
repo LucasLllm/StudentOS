@@ -1391,36 +1391,60 @@ a.button {
 /* ---------- the browser the agent is driving ---------- */
 
 /*
- * In the conversation, not floating over it. The work belongs to this
- * exchange, and a panel hovering over the app reads as something that
- * happened rather than something asked for.
+ * In the conversation, as an ordinary element of it.
+ *
+ * A card, not the live browser: the live browser is a native view that always
+ * paints over this page, so inline it overlapped the composer and dialogs and
+ * never faded with the transcript. The card is a real element, so it scrolls,
+ * fades and sits under everything the way the text around it does -- and it
+ * cannot be typed or clicked into, which is why opening it is a deliberate
+ * act rather than something a stray click falls into.
  */
-.agent-browser {
-  position: relative;
+.agent-browser-card {
+  display: block;
+  width: 100%;
   margin: 0.75rem 0;
+  padding: 0;
+  border: 0;
   border-radius: 12px;
   overflow: hidden;
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line);
-  transition: box-shadow 400ms ease;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    box-shadow 220ms ease;
 }
 
-.agent-browser.expanded {
-  position: fixed;
-  inset: 3rem;
-  z-index: 60;
-  margin: 0;
+/*
+ * It grows when you point at it, the way anything that opens on a click does.
+ *
+ * A small lift and a real change of scale, so the affordance is felt and not
+ * only read -- and the Open control fills in from faint to solid at the same
+ * moment, so the two say one thing together.
+ */
+.agent-browser-card:hover {
+  transform: translateY(-3px) scale(1.012);
   box-shadow:
     inset 0 0 0 1px var(--line),
     var(--shadow-float);
 }
 
+.agent-browser-card:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 0 0 3px var(--focus);
+}
+
 /*
- * The strip the controls live on.
+ * The strip along the top, on the card and on the open browser both.
  *
- * It exists because the browser is a native view drawn over this page: inside
- * the frame, a button is behind the site and a label is invisible. Everything
- * the student can see or press is up here, clear of it.
+ * On the open browser it earns its place: the native view covers the frame,
+ * so the label and the way out have to live clear of it, up here.
  */
 .agent-browser-bar {
   position: relative;
@@ -1429,32 +1453,126 @@ a.button {
   align-items: center;
   gap: 0.5rem;
   height: 2.4rem;
-  padding: 0 0.6rem;
+  padding: 0 0.7rem;
   border-bottom: 1px solid var(--line);
   background: var(--wash);
 }
 
-/* The page itself. The native browser is positioned to fill exactly this. */
-.agent-browser-frame {
-  height: 16rem;
-  cursor: pointer;
-  background: #fff;
+/* The three dots that say "a browser" at a glance. Still, not the working ones. */
+.agent-browser-chrome {
+  display: inline-flex;
+  gap: 4px;
 }
 
-.agent-browser.expanded .agent-browser-frame {
-  height: calc(100% - 2.4rem);
+.agent-browser-chrome i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+/*
+ * The Open control, pushed to the right of the bar.
+ *
+ * Present at rest so the card is plainly openable before anyone hovers, and
+ * brought to full strength on hover so pointing at the card confirms it.
+ */
+.agent-browser-open {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.agent-browser-card:hover .agent-browser-open {
+  color: #fff;
+  background: linear-gradient(90deg, var(--blue), var(--violet));
+  box-shadow: none;
+}
+
+/*
+ * The face of the card: a quiet page-shaped panel with the state on it.
+ *
+ * Not a screenshot -- a hidden view yields no live frame to show -- so it
+ * says what the browser is doing in words instead, and holds the open-glyph
+ * so the whole card reads as a thing that opens.
+ */
+.agent-browser-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 8.5rem;
+  padding: 1.25rem;
+  background: light-dark(#fbfcff, #0f1330);
+  color: var(--ink-faint);
+  transition: color 180ms ease;
+}
+
+.agent-browser-card:hover .agent-browser-preview {
+  color: var(--ink-soft);
+}
+
+.agent-browser-preview-icon {
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+  transition:
+    transform 180ms ease,
+    color 180ms ease;
+}
+
+.agent-browser-card:hover .agent-browser-preview-icon {
+  transform: scale(1.08);
+  color: var(--blue);
+}
+
+.agent-browser-preview-text {
+  font-size: 0.85rem;
+}
+
+/* The open browser: a fixed panel, where a native view on top is exactly right. */
+.agent-browser-overlay {
+  position: fixed;
+  inset: 3rem;
+  z-index: 60;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The page itself. The native browser is positioned to fill exactly this. */
+.agent-browser-frame {
+  flex: 1;
+  min-height: 0;
+  background: #fff;
 }
 
 /*
  * The aura, only while the agent is actually working.
  *
- * Drawn outside the panel rather than within it. An inner glow was the nicer
- * idea and cannot work here: it renders inside the frame, which is precisely
- * the rectangle the native view paints over, so none of it was ever visible.
  * Cyan, blue, violet, drifting slowly enough to read as alive rather than
- * urgent.
+ * urgent. On the card it rings the element; on the open browser it rings the
+ * overlay, clear of the frame the native view paints over.
  */
-.agent-browser.working {
+.agent-browser-card.working,
+.agent-browser-overlay.working {
   animation: agent-aura 5s ease-in-out infinite;
 }
 
@@ -1524,11 +1642,17 @@ a.button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-browser.working {
+  .agent-browser-card.working,
+  .agent-browser-overlay.working {
     animation: none;
     box-shadow:
       inset 0 0 0 2px rgba(64, 112, 255, 0.55),
       0 0 0 3px rgba(0, 192, 192, 0.2);
+  }
+
+  /* No grow-on-hover when motion is reduced; the Open control still fills in. */
+  .agent-browser-card:hover {
+    transform: none;
   }
 }
 
