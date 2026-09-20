@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { connectGoogleScopes } from '../lib/auth.js';
+import { connectErrorFromSearch } from '../lib/connectReturn.js';
 import { ClassroomLogo, DriveLogo, GmailLogo, SparkMark } from './ConnectionLogos.js';
 import { Row } from './SettingsRow.js';
 import { Toggle } from './Toggle.js';
@@ -41,6 +42,31 @@ export function GoogleConnections() {
 
   useEffect(() => {
     void load();
+
+    /*
+     * Google's no arrives on the address (see lib/connectReturn.ts). Shown
+     * once, then taken off it, so a refresh is not told the same thing again.
+     */
+    const refused = connectErrorFromSearch(window.location.search);
+    if (refused) {
+      setError(refused);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('error');
+      url.searchParams.delete('error_description');
+      window.history.replaceState({}, '', url);
+    }
+  }, []);
+
+  /*
+   * Back, pressed on Google's screen, can bring this page out of the browser's
+   * cache exactly as it was left: "Opening…", every button disabled. Nothing
+   * is opening any more, so the buttons come back. A fresh load fires the
+   * same event with nothing to undo.
+   */
+  useEffect(() => {
+    const shown = () => setBusy(null);
+    window.addEventListener('pageshow', shown);
+    return () => window.removeEventListener('pageshow', shown);
   }, []);
 
   async function connect(group: Group | 'all') {
@@ -107,29 +133,42 @@ export function GoogleConnections() {
        * make three separate permission decisions before it does anything.
        */}
       {!allConnected && (
-        <div className="connect-all">
-          {/* The glow is on the wrapper; the card sits above it. See the CSS. */}
-          <div className="connect-all-card">
-            <span className="settings-icon" aria-hidden="true">
-              <SparkMark />
-            </span>
-            <div className="settings-label">
-              <span>
-                Connect everything
-                <span className="recommended">Recommended</span>
+        <>
+          <div className="connect-all">
+            {/* The glow is on the wrapper; the card sits above it. See the CSS. */}
+            <div className="connect-all-card">
+              <span className="settings-icon" aria-hidden="true">
+                <SparkMark />
               </span>
-            </div>
-            <div className="settings-control">
-              <button
-                className="primary"
-                disabled={busy !== null}
-                onClick={() => void connect('all')}
-              >
-                {busy === 'all' ? 'Opening…' : 'Connect'}
-              </button>
+              <div className="settings-label">
+                <span>
+                  Connect everything
+                  <span className="recommended">Recommended</span>
+                </span>
+              </div>
+              <div className="settings-control">
+                <button
+                  className="primary"
+                  disabled={busy !== null}
+                  onClick={() => void connect('all')}
+                >
+                  {busy === 'all' ? 'Opening…' : 'Connect'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+          {/*
+           * The scopes are unverified with Google (see the note in
+           * packages/agent/src/tools/google/scopes.ts), so Google's screen
+           * leads with "Back to safety". A first-time student takes that
+           * exit, comes back here, and finds nothing connected -- the way
+           * through is a small link Google does not draw attention to.
+           */}
+          <p className="settings-note">
+            If Google warns that this app is not verified, choose <strong>Advanced</strong> and
+            continue anyway.
+          </p>
+        </>
       )}
 
       {CONNECTIONS.map(({ group, name, logo }) => (

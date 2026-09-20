@@ -5,6 +5,7 @@ import { api } from '../lib/api.js';
 import { applyAppearance, type Appearance } from '../lib/theme.js';
 import { forgetGraph, loadGraph } from '../lib/vaultGraph.js';
 import { signOut } from '../lib/auth.js';
+import { sectionFromSearch } from '../lib/connectReturn.js';
 import { initialOf } from '../lib/initial.js';
 import { ArchivedChats } from './ArchivedChats.js';
 import { DeviceConnections } from './DeviceConnections.js';
@@ -33,7 +34,11 @@ const SECTIONS = ['General', 'Account', 'Usage', 'Connections', 'Memory'] as con
 type Section = (typeof SECTIONS)[number];
 
 export function Settings({ onClose }: { onClose: () => void }) {
-  const [section, setSection] = useState<Section>('General');
+  // Google sends a student back to /settings?section=connections, so the
+  // window opens on what they went to Google for rather than on General.
+  const [section, setSection] = useState<Section>(
+    () => sectionFromSearch(window.location.search) ?? 'General',
+  );
   const [me, setMe] = useState<MeProfile | null>(null);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { createAuthClient } from 'better-auth/react';
 import { API_BASE_URL } from './env.js';
+import { connectReturnUrl } from './connectReturn.js';
 
 /**
  * Auth client.
@@ -45,10 +46,19 @@ export function signInWithGoogle() {
  * that route.
  */
 export function connectGoogleScopes(scopes: string[]) {
+  /*
+   * Back to Settings, open on Connections -- not to the page they were on.
+   * Settings is a window over the conversation, so the current address is
+   * the chat underneath it, and returning there closed the window and left
+   * them to find out for themselves whether anything had connected. The
+   * same address for Google's no: without it, Better Auth shows its own
+   * error page and the student's way back is the browser's Back button.
+   */
+  const here = connectReturnUrl(window.location.origin);
   return linkSocial({
     provider: 'google',
     scopes,
-    // Back to Settings, where they pressed Connect.
-    callbackURL: window.location.href,
+    callbackURL: here,
+    errorCallbackURL: here,
   });
 }
