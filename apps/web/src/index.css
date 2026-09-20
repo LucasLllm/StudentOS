@@ -2021,7 +2021,14 @@ a.button {
   gap: 3.3px;
   background: none;
   border: 0;
-  padding: 0.4rem 0.5rem 1rem;
+  /*
+   * Even top and bottom, so the lockup sits centred in the hover fill rather
+   * than riding high in it. The space that used to be bottom padding is a
+   * margin instead -- outside the padding box the hover paints, so the gap to
+   * the New button is unchanged while the rectangle stays symmetrical.
+   */
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.6rem;
   cursor: pointer;
 }
 
