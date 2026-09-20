@@ -38,6 +38,8 @@ let container: HTMLDivElement;
 let root: Root;
 /** The body of the last request that would have sent the student to Google. */
 let linkRequest: Record<string, unknown> | null;
+/** What the server says to that request. Deferred rather than followed: a test has nowhere to go. */
+let linkResponse: () => Response;
 
 /** Let the component's in-flight fetches settle. */
 async function settle() {
@@ -54,6 +56,8 @@ const json = (body: unknown) =>
 
 beforeEach(() => {
   linkRequest = null;
+  linkResponse = () =>
+    json({ url: 'https://accounts.google.com/o/oauth2/v2/auth', redirect: false });
   network.handler = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.endsWith('/api/google/status')) {
@@ -69,8 +73,7 @@ beforeEach(() => {
     if (url.endsWith('/api/auth/link-social')) {
       const raw = init?.body ?? (input instanceof Request ? await input.text() : '');
       linkRequest = JSON.parse(String(raw)) as Record<string, unknown>;
-      // Deferred rather than followed: a test has nowhere to go.
-      return json({ url: 'https://accounts.google.com/o/oauth2/v2/auth', redirect: false });
+      return linkResponse();
     }
     return new Response('', { status: 404 });
   };
@@ -113,6 +116,24 @@ describe('leaving for Google', () => {
     const here = `${window.location.origin}/settings?section=connections`;
     expect(linkRequest?.['callbackURL']).toBe(here);
     expect(linkRequest?.['errorCallbackURL']).toBe(here);
+  });
+});
+
+describe('not getting to Google', () => {
+  it('says so, rather than staying on Opening… for ever', async () => {
+    // The auth client reports a refused request instead of throwing it.
+    linkResponse = () =>
+      new Response(JSON.stringify({ message: 'Unauthorized', code: 'UNAUTHORIZED' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    await show();
+    await pressConnectAll();
+
+    expect(container.textContent).toContain('Could not open Google');
+    expect(container.textContent).toContain('Unauthorized');
+    expect(connectAll()?.textContent).toBe('Connect');
+    expect(connectAll()?.disabled).toBe(false);
   });
 });
 

@@ -85,7 +85,14 @@ export function GoogleConnections() {
       if (!('scopes' in body)) throw new Error('Unexpected response.');
 
       // Redirects to Google. Execution stops here on success.
-      await connectGoogleScopes(body.scopes);
+      const result = await connectGoogleScopes(body.scopes);
+      // A refusal comes back as data, not as a throw. Unread, it looked like
+      // a page that never opened: "Opening…" for ever, and nothing to go on.
+      if (result.error) {
+        throw new Error(
+          `Could not open Google: ${result.error.message ?? result.error.statusText ?? 'unknown error'}`,
+        );
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unknown error');
       setBusy(null);
