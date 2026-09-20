@@ -10,6 +10,7 @@ import { FilePreview } from './FilePreview.js';
 import { MessageText } from './MessageText.js';
 import { MessageFiles } from './MessageFiles.js';
 import { useAttachments } from '../lib/attachments.js';
+import { pastedImages } from '../lib/paste.js';
 import { chatsChanged } from '../lib/chats.js';
 import type { Attachment as AttachmentItem } from '../lib/attachments.js';
 import { AttachButton, AttachedFiles } from './AttachButton.js';
@@ -482,6 +483,13 @@ export function Chat({ agentId }: Props) {
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
+                onPaste={(e) => {
+                  // A picture on the clipboard is attached, not typed.
+                  const images = pastedImages(e.clipboardData);
+                  if (images.length === 0) return;
+                  e.preventDefault();
+                  attachments.add(images);
+                }}
                 /*
                  * Not the chat's name. It used to be an agent the student had
                  * named -- "Message Study buddy" -- and a title taken from the

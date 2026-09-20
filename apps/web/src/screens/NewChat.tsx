@@ -5,6 +5,7 @@ import { handOff } from '../lib/handoff.js';
 import { pickGreeting } from '../lib/greeting.js';
 import { navigate } from '../lib/router.js';
 import { useAttachments } from '../lib/attachments.js';
+import { pastedImages } from '../lib/paste.js';
 import { AttachButton, AttachedFiles } from './AttachButton.js';
 import { LogoMark } from './LogoMark.js';
 
@@ -103,6 +104,13 @@ export function NewChat({ name }: Props) {
             className="newchat-input"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              // A picture on the clipboard is attached, not typed.
+              const images = pastedImages(event.clipboardData);
+              if (images.length === 0) return;
+              event.preventDefault();
+              attachments.add(images);
+            }}
             onKeyDown={(event) => {
               // Enter sends, Shift+Enter breaks the line -- what every chat
               // box does, and a textarea does neither by default.
