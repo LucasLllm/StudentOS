@@ -16,11 +16,11 @@ The Studyo sync and `autoSignIn` open the same partition, so the keychain sign-i
 
 ## A browser Google accepts
 
-The view identifies itself as Electron, and Google's sign-in page refuses that outright. The shared session gets a plain Chrome user agent: Electron's own fallback with the `Electron/x.y.z` and `ContextoAgent/x.y.z` tokens removed, set once when the partition's session is first taken. `userAgentFor(fallback)` is a pure function so the stripping is testable.
+The view identifies itself as Electron, and Google's sign-in page refuses that outright. Measured on 21 September 2026, from the view itself, with the debugger released and input sent by the window's own path, the way a student types: the same string with the `Electron/x.y.z` and `ContextoAgent/x.y.z` tokens removed, an ordinary and truthful Chrome string, is still answered "This browser or app may not be secure"; a Firefox string for the same platform is let through to the ordinary next step. So the shared session presents as Firefox on the student's platform, set on the partition before any view is created (a session's user agent applies only to contents created after it is set) and on each view's contents as well. `userAgentFor(platform)` is a pure function so the string is testable. The version in it is the one that was measured, and the place to look if Google ever stops accepting it.
 
-The debugger stays attached for the life of the view, as now. An in-process attach does not set `navigator.webdriver`; the spike confirms it by evaluating it in the view.
+`navigator.webdriver` is false in the view with the debugger attached, measured the same day. The debugger is released whenever the agent's step ends, so a student signing in by hand types into an un-instrumented page.
 
-This is the one thing that cannot be known from the code, so it is measured first, before the rest is built. The student opens the browser card and signs in to the wearelcc.ca Google account by hand. Pass: Google lets them through to the account. Fail: Google says the browser or app may not be secure, in which case the work stops and the decision comes back to the student, because the only route left is the profile copy this document rejects.
+The student's own sign-in to the wearelcc.ca account, by hand in the card, is the final check and happens once the rest is built, so everything is tested in one sitting.
 
 ## Signing in, typed by the machine
 

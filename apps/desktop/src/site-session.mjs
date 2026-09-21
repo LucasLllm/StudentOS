@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { WebContentsView, app, session } from 'electron';
+import { WebContentsView, session } from 'electron';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -18,16 +18,22 @@ export const SHARED_PARTITION = 'persist:school';
  * A user agent Google's sign-in page will accept.
  *
  * Google answers a browser that names itself Electron with "This browser or
- * app may not be secure" and stops there. The rest of Electron's default
- * string is an ordinary Chrome on this OS, so the two tokens that give it
- * away -- Electron's own, and the embedding app's -- come out, and nothing
- * else changes. Not a spoof: what is left is true.
+ * app may not be secure" and stops there. Measured on 21 September 2026,
+ * from this view, with the debugger released and input by the window's own
+ * path: the same string with the Electron and app tokens removed -- an
+ * ordinary Chrome, and true -- is still refused; a Firefox string for the
+ * same platform is let through to the ordinary next step. So the profile
+ * presents as Firefox. Sites behave the same; the version is the one that
+ * was measured, and the place to look if Google ever stops accepting it.
  */
-export function userAgentFor(fallback) {
-  return fallback
-    .replace(/\s(?:Electron|ContextoAgent)\/\S+/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+export function userAgentFor(platform = process.platform) {
+  const os =
+    platform === 'darwin'
+      ? 'Macintosh; Intel Mac OS X 10.15'
+      : platform === 'win32'
+        ? 'Windows NT 10.0; Win64; x64'
+        : 'X11; Linux x86_64';
+  return `Mozilla/5.0 (${os}; rv:143.0) Gecko/20100101 Firefox/143.0`;
 }
 
 /**
@@ -72,7 +78,7 @@ export class SiteSession {
      * announcing Electron. Setting it on the contents as well covers the view
      * whatever order Electron settles on.
      */
-    const ua = userAgentFor(app.userAgentFallback);
+    const ua = userAgentFor();
     session.fromPartition(SHARED_PARTITION).setUserAgent(ua);
     this.view = new WebContentsView({
       webPreferences: {
