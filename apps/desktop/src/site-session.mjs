@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { WebContentsView, app } from 'electron';
+import { WebContentsView, app, session } from 'electron';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -66,6 +66,14 @@ export class SiteSession {
   }
 
   async launch() {
+    /*
+     * Before the view exists: a session's user agent applies only to contents
+     * created after it is set, so setting it afterwards leaves the page
+     * announcing Electron. Setting it on the contents as well covers the view
+     * whatever order Electron settles on.
+     */
+    const ua = userAgentFor(app.userAgentFallback);
+    session.fromPartition(SHARED_PARTITION).setUserAgent(ua);
     this.view = new WebContentsView({
       webPreferences: {
         /*
@@ -84,9 +92,7 @@ export class SiteSession {
     });
 
     const wc = this.webContents;
-    // The shared session, so it holds for every view on it. Setting it again
-    // for each view is harmless and saves tracking whether it was done.
-    wc.session.setUserAgent(userAgentFor(app.userAgentFallback));
+    wc.setUserAgent(ua);
     /*
      * A link that wants a new window opens here instead. There is one view
      * per session, and it is the one the student is watching; a page that
