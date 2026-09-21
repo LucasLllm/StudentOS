@@ -5,6 +5,7 @@ import { createContext } from './context.js';
 import { handleError } from './errors.js';
 import { loadEnv } from './env.js';
 import { createRoutes } from './routes/index.js';
+import { hintGoogleAuthResponse } from './google/login-hint.js';
 import { startVaultLive } from './vault-live.js';
 import { startVaultRefresh } from './vault-refresh.js';
 
@@ -30,7 +31,20 @@ app.use(
 );
 
 /** Better Auth owns everything under /api/auth. */
-app.on(['GET', 'POST'], '/api/auth/*', (c) => ctx.auth.handler(c.req.raw));
+app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
+  const res = await ctx.auth.handler(c.req.raw);
+  /*
+   * On a connect, tell Google which account to use. See google/login-hint.ts:
+   * without it a student with two Google accounts in the browser can consent
+   * as the wrong one, which the callback rejects as email_doesn't_match. The
+   * session lookup is skipped unless the response is actually a Google
+   * redirect, so it costs nothing on ordinary auth calls.
+   */
+  const location = res.headers.get('location');
+  if (!location?.startsWith('https://accounts.google.com/')) return res;
+  const session = await ctx.auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
+  return hintGoogleAuthResponse(res, session?.user?.email);
+});
 
 app.route('/api', createRoutes(ctx));
 
