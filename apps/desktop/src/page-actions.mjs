@@ -15,12 +15,15 @@
  * el.value = x -- are kept only as the fallback for an element the mouse
  * cannot reach.
  *
- * Two refusals live here rather than in the prompt, so no page can talk the
- * agent out of them. Nothing is ever typed into a password field: sign-in is
- * this machine's job, from the keychain, and an agent that could be made to
- * type a password is an agent that could be made to type it anywhere. And a
- * password field's value is never reported, whatever it holds.
+ * Two rules live here rather than in the prompt, so no page can talk the
+ * agent out of them. The agent's own text never goes into a password field:
+ * a password box takes only the sign-in this machine saved, read from the
+ * keychain at that moment and only for the page's own origin -- an agent that
+ * could be made to type a password is an agent that could be made to type it
+ * anywhere. And a password field's value is never reported, whatever it holds.
  */
+
+import { signInScript } from './sign-in.mjs';
 
 const ATTR = 'data-contexto-ref';
 const MAX_ELEMENTS = 150;
@@ -392,15 +395,40 @@ export async function pressKey(cdp, name) {
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 }
 
-async function type(session, ref, text, submit) {
+/** Where the page is from, so a saved sign-in only ever reaches its own site. */
+const ORIGIN = `JSON.stringify({ origin: location.origin })`;
+
+/**
+ * Sign in with what this machine saved for the site, and nothing else.
+ *
+ * The keychain is asked for the page's exact origin; the answer goes into
+ * the page and nowhere else. The agent never holds it, and a page from
+ * anywhere else gets nothing, however it asks.
+ */
+async function signInFromKeychain(session, credentialsFor) {
+  const { origin } = await run(session, ORIGIN);
+  const saved = origin ? await credentialsFor?.(origin) : null;
+  if (!saved) {
+    throw new ActionError(
+      'There is no saved sign-in for this site. Tell the student they can sign in once in the ' +
+        'browser card in this conversation and it stays signed in, or save a sign-in under ' +
+        'Settings, Connections, Sites.',
+    );
+  }
+  const outcome = await session.evaluate(signInScript(saved.username, saved.password));
+  if (outcome !== 'submitted' && outcome !== 'submitted-username') {
+    throw new ActionError('This page is not asking for a sign-in. Look at the page again.');
+  }
+}
+
+async function type(session, ref, text, submit, credentialsFor) {
   const box = await run(session, TYPE_PREP(ref));
   if (box.missing) throw gone(ref);
   if (box.password) {
-    throw new ActionError(
-      `[${ref}] is a password box, and nothing is ever typed into one of those. Signing in is ` +
-        "done by the student's computer with the sign-in they saved: use portal_refresh for a " +
-        'connected site, or tell them a site that is not connected can be added in Settings.',
-    );
+    // The agent's text is dropped here, whatever it was. A password box takes
+    // only the sign-in saved for this site, typed by this machine.
+    await signInFromKeychain(session, credentialsFor);
+    return;
   }
   if (box.notEditable) throw new ActionError(`[${ref}] is not something that can be typed into.`);
   if (box.readOnly) throw new ActionError(`[${ref}] does not accept typing right now.`);
@@ -453,7 +481,7 @@ function refOf(action) {
  * Every action ends in a fresh reading, because whatever it did is only
  * useful to an agent that can now see the result.
  */
-export async function performAction(session, action) {
+export async function performAction(session, action, { credentialsFor } = {}) {
   const wc = session.webContents;
   const kind = action?.action;
   const ref = refOf(action);
@@ -471,7 +499,12 @@ export async function performAction(session, action) {
     case 'type':
       needsRef();
       if (typeof action.text !== 'string') throw new ActionError('type needs the text to type.');
-      await settle(wc, () => type(session, ref, action.text, Boolean(action.submit)));
+      await settle(wc, () =>
+        type(session, ref, action.text, Boolean(action.submit), credentialsFor),
+      );
+      break;
+    case 'sign_in':
+      await settle(wc, () => signInFromKeychain(session, credentialsFor));
       break;
     case 'press':
       await settle(wc, () => pressKey(session.cdp, action.key));

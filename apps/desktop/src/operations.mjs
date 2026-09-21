@@ -273,7 +273,17 @@ export async function actOnPage(action) {
   }
   const browser = resumeBrowser(page);
   try {
-    const read = await performAction(browser, action);
+    const read = await performAction(browser, action, {
+      /*
+       * The keychain, asked from here and only for an exact origin. A saved
+       * sign-in reaches its own site and no other, whatever page is asking,
+       * and the answer never leaves this process.
+       */
+      credentialsFor: (origin) => {
+        const site = listPortals().find((p) => p.origin === origin);
+        return site ? readCredentials(site.id) : null;
+      },
+    });
     await browser.close();
     return read;
   } catch (error) {

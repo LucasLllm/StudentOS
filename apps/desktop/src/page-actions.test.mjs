@@ -254,12 +254,15 @@ describe('acting on the page', () => {
     expect(session.sent.map((s) => s.key)).toEqual(['Backspace', 'Backspace']);
   });
 
-  it('refuses to type into a password box, whatever it is told', async () => {
+  it('never types what it was told into a password box', async () => {
+    // No keychain to ask here, so the only honest answer is that nothing is
+    // saved -- and the agent's own text goes nowhere either way.
     const session = fakeSession(() => JSON.stringify({ password: true }));
     await expect(act(session, { action: 'type', ref: 4, text: 'hunter2' })).rejects.toThrow(
-      /password box.*saved/i,
+      /no saved sign-in/i,
     );
     expect(session.sent).toEqual([]);
+    expect(JSON.stringify(session.evaluate.mock.calls)).not.toContain('hunter2');
   });
 
   it('lists the choices when the one asked for is not there', async () => {
@@ -342,5 +345,96 @@ describe('settle', () => {
     await vi.advanceTimersByTimeAsync(250 + 800);
     await done;
     expect(settled).toBe(true);
+  });
+});
+
+/**
+ * Signing in, typed by this machine.
+ *
+ * The agent asks; the keychain answers, for the page's own origin and no
+ * other; and what the agent itself typed never reaches a password box. The
+ * page is a fake that reports an origin, accepts the fill, and hands back a
+ * reading, so what is pinned here is the order and the boundary, not the DOM.
+ */
+describe('signing in', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const ORIGIN = 'https://studyo.app';
+  const isFill = (script) => script.includes('no-sign-in-field');
+
+  /** A page that reports its origin, takes the fill, and calls a box a password box. */
+  const signInPage =
+    (outcome = 'submitted') =>
+    (script) =>
+      script.includes('location.origin')
+        ? JSON.stringify({ origin: ORIGIN })
+        : isFill(script)
+          ? outcome
+          : script.includes('data-contexto-ref')
+            ? JSON.stringify({ password: true })
+            : JSON.stringify({ ok: true });
+
+  async function runAction(session, action, opts) {
+    const done = performAction(session, action, opts);
+    done.catch(() => {});
+    await vi.runAllTimersAsync();
+    return done;
+  }
+
+  const fillsEvaluated = (session) => session.evaluate.mock.calls.map((c) => c[0]).filter(isFill);
+
+  it('asks the keychain for the page origin and fills the form with what it gave', async () => {
+    const session = fakeSession(signInPage());
+    const asked = [];
+    const credentialsFor = (origin) => {
+      asked.push(origin);
+      return { username: 'alice', password: 'hunter2' };
+    };
+    const after = await runAction(session, { action: 'sign_in' }, { credentialsFor });
+    expect(asked).toEqual([ORIGIN]);
+    const fills = fillsEvaluated(session);
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toContain('"alice"');
+    expect(fills[0]).toContain('"hunter2"');
+    expect(after.title).toBe('X');
+  });
+
+  it('refuses, with somewhere to go, when nothing is saved for that origin', async () => {
+    const session = fakeSession(signInPage());
+    await expect(
+      runAction(session, { action: 'sign_in' }, { credentialsFor: () => null }),
+    ).rejects.toThrow(/no saved sign-in/i);
+    expect(fillsEvaluated(session)).toEqual([]);
+  });
+
+  it('refuses when nobody can answer for the keychain at all', async () => {
+    const session = fakeSession(signInPage());
+    await expect(runAction(session, { action: 'sign_in' })).rejects.toThrow(/no saved sign-in/i);
+  });
+
+  it('says so when the page is not asking for a sign-in', async () => {
+    const session = fakeSession(signInPage('no-sign-in-field'));
+    await expect(
+      runAction(
+        session,
+        { action: 'sign_in' },
+        { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+      ),
+    ).rejects.toThrow(/not asking for a sign-in/i);
+  });
+
+  it('types the saved sign-in, never the agent text, into a password box', async () => {
+    const session = fakeSession(signInPage());
+    const credentialsFor = () => ({ username: 'alice', password: 'hunter2' });
+    await runAction(
+      session,
+      { action: 'type', ref: 5, text: 'whatever the agent typed' },
+      { credentialsFor },
+    );
+    const everything = JSON.stringify([session.evaluate.mock.calls, session.sent]);
+    expect(everything).not.toContain('whatever the agent typed');
+    expect(fillsEvaluated(session)).toHaveLength(1);
+    expect(session.sent.some((s) => s.method === 'Input.insertText')).toBe(false);
   });
 });
