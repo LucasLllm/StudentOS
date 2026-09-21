@@ -125,7 +125,7 @@ export interface PortalSnapshot {
  * the two.
  */
 export interface BrowserAction {
-  action: 'click' | 'type' | 'press' | 'select' | 'scroll' | 'back' | 'look';
+  action: 'click' | 'type' | 'press' | 'select' | 'scroll' | 'back' | 'look' | 'sign_in';
   /** The number of the element, from the last reading of the page. */
   ref?: number;
   text?: string;

@@ -173,7 +173,7 @@ export const browseWithAgent: Tool<z.infer<typeof browseInput>, unknown> = {
 
 const actInput = z.object({
   action: z
-    .enum(['click', 'type', 'press', 'select', 'scroll', 'back', 'look'])
+    .enum(['click', 'type', 'press', 'select', 'scroll', 'back', 'look', 'sign_in'])
     .describe('What to do. One thing per call.'),
   ref: z
     .number()
@@ -234,6 +234,10 @@ export function problemWith(input: ActInput): string | null {
       return input.ref || input.direction
         ? null
         : 'scroll needs direction (down, up, top or bottom), or ref: an element to scroll to.';
+    case 'sign_in':
+      // Nothing to send: the computer finds the boxes and the keychain fills
+      // them. A ref or text here would be the model trying to do its job.
+      return null;
     default:
       return null;
   }
@@ -271,6 +275,8 @@ export function describeAction(action: BrowserAction): string {
       return 'went back a page';
     case 'look':
       return 'looked at the page again';
+    case 'sign_in':
+      return 'signed in with their saved sign-in';
   }
 }
 
@@ -290,12 +296,14 @@ export const actInBrowser: Tool<ActInput, unknown> = {
     'presses Enter after, which is how a search is run or a form sent), press (key, for example ' +
     'Enter, Tab, Escape or ArrowDown), select (ref and value, the option to choose), scroll ' +
     '(direction down, up, top or bottom, or ref to scroll to), back (the previous page), look ' +
-    '(read the page again without doing anything, for a page that was still changing). ref is ' +
-    'the [number] from the last page result. Each call does exactly one thing and returns the ' +
-    'page as it stands afterwards; read that before the next step. Nothing is ever typed into a ' +
-    'password box: sign-in is done by their computer with the sign-in they saved. Ask the student ' +
-    'before anything that cannot be undone -- submitting work, sending a message, buying, ' +
-    'deleting, changing settings.',
+    '(read the page again without doing anything, for a page that was still changing), sign_in ' +
+    '(when a page asks to be signed in: their computer fills the sign-in they saved for that ' +
+    'site and submits it; no ref or text needed). ref is the [number] from the last page ' +
+    'result. Each call does exactly one thing and returns the page as it stands afterwards; ' +
+    'read that before the next step. A password box takes only their saved sign-in, typed by ' +
+    'their computer -- you never see the password and never need to. Ask the student before ' +
+    'anything that cannot be undone -- submitting work, sending a message, buying, deleting, ' +
+    'changing settings.',
   inputSchema: actInput,
 
   async execute(input, ctx) {

@@ -120,6 +120,19 @@ describe('browser_act', () => {
     );
   });
 
+  it('sends a sign-in with no element number, and says it signed in', async () => {
+    // The computer picks the boxes and the keychain supplies the words; the
+    // model only asks. Nothing it could send would be typed anyway.
+    const { ctx, requestAction } = ctxWith();
+    const result = (await actInBrowser.execute({ action: 'sign_in' }, ctx)) as {
+      acted: boolean;
+      note: string;
+    };
+    expect(requestAction).toHaveBeenCalledWith('u1', { action: 'sign_in' }, 'a1');
+    expect(result.acted).toBe(true);
+    expect(result.note).toMatch(/signed in/i);
+  });
+
   it('returns the page after, and says the step was done', async () => {
     const { ctx } = ctxWith();
     const result = (await actInBrowser.execute({ action: 'click', ref: 3 }, ctx)) as {
@@ -181,6 +194,7 @@ describe('describeAction', () => {
     [{ action: 'scroll', ref: 9 }, /scrolled to \[9\]/],
     [{ action: 'back' }, /went back/],
     [{ action: 'look' }, /looked/],
+    [{ action: 'sign_in' }, /signed in with their saved sign-in/],
   ])('%j', (action, expected) => {
     expect(describeAction(action)).toMatch(expected);
   });
