@@ -226,22 +226,23 @@ function resumeBrowser(session) {
 export async function browsePage(url) {
   const target = new URL(url);
   const site = listPortals().find((p) => p.origin === target.origin);
-  // A page on a connected site borrows its session; anything else gets a
-  // general profile, kept apart from every site the student signed into.
-  const partition = site ? site.id : 'agent-browsing';
+  // Only a name now: every view shares one store, so a page behind a login
+  // the student has anywhere in it simply opens. A connected site is called
+  // by its name in the conversation; anything else by its host.
+  const label = site ? site.id : target.host;
 
   /*
-   * The same page, when it is the same conversation on the same site.
+   * The same view, when it is the same conversation.
    *
    * Following a link the agent was just looking at replaces nothing: the
-   * view the student is watching goes where it was told, the way their own
-   * browser would. A different site needs its own store, and a different
-   * conversation gets a view of its own.
+   * view the student is watching goes where it was told, the way a tab does,
+   * whatever site the link leads to. Only a different conversation gets a
+   * view of its own.
    */
   const open = pageLeftOpen();
-  const same =
-    open && showsInChat(open) && open.portalId === partition && open.agentId === workingForAgent;
-  const browser = same ? resumeBrowser(open) : await openBrowser(partition);
+  const same = open && showsInChat(open) && open.agentId === workingForAgent;
+  if (same) open.portalId = label;
+  const browser = same ? resumeBrowser(open) : await openBrowser(label);
   current = browser.view ? browser : null;
   try {
     await browser.openPage(target.toString());

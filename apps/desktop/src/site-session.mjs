@@ -1,8 +1,34 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { WebContentsView } from 'electron';
+import { WebContentsView, app } from 'electron';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * One store for everything the agent's browser does, the way a Chrome profile
+ * is one store. A site signed into stays signed in, and Sign in with Google
+ * carries from one site to the next -- which a partition per site could never
+ * do, since Google's cookies sat in whichever site's jar the sign-in happened
+ * in. The label a conversation shows is still the site's; only the store is
+ * shared.
+ */
+export const SHARED_PARTITION = 'persist:school';
+
+/**
+ * A user agent Google's sign-in page will accept.
+ *
+ * Google answers a browser that names itself Electron with "This browser or
+ * app may not be secure" and stops there. The rest of Electron's default
+ * string is an ordinary Chrome on this OS, so the two tokens that give it
+ * away -- Electron's own, and the embedding app's -- come out, and nothing
+ * else changes. Not a spoof: what is left is true.
+ */
+export function userAgentFor(fallback) {
+  return fallback
+    .replace(/\s(?:Electron|ContextoAgent)\/\S+/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
 
 /**
  * A browser the agent drives, inside the app.
@@ -13,9 +39,10 @@ const here = dirname(fileURLToPath(import.meta.url));
  * appearing on their dock, opening tabs, or fighting over a profile
  * directory.
  *
- * Each site gets its own persistent partition, so a session survives restarts
- * and no site can see another's cookies. Same isolation the separate Chrome
- * profiles gave, without the separate Chrome.
+ * Every session shares one persistent store, SHARED_PARTITION, so a sign-in
+ * survives restarts and carries across sites the way it does in a browser
+ * profile. The portalId is what the conversation calls it, not where its
+ * cookies live.
  *
  * The explorer is unchanged: this presents the same small surface it already
  * expected -- cdp.send, cdp.on, navigate -- backed by webContents.debugger
@@ -49,7 +76,7 @@ export class SiteSession {
          * top to press.
          */
         preload: join(here, 'site-view-preload.cjs'),
-        partition: `persist:site-${this.portalId}`,
+        partition: SHARED_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -57,6 +84,9 @@ export class SiteSession {
     });
 
     const wc = this.webContents;
+    // The shared session, so it holds for every view on it. Setting it again
+    // for each view is harmless and saves tracking whether it was done.
+    wc.session.setUserAgent(userAgentFor(app.userAgentFallback));
     /*
      * A link that wants a new window opens here instead. There is one view
      * per session, and it is the one the student is watching; a page that
