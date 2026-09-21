@@ -17,9 +17,17 @@ describe('what every agent is told about signing in', () => {
     expect(SIGN_IN_SECTION).toMatch(/never say you cannot handle a password/i);
   });
 
-  it('tells it not to send the student off to sign in by hand', () => {
+  it('tells it never to ask for the password', () => {
     expect(SIGN_IN_SECTION).toMatch(/must never ask for it/i);
-    expect(SIGN_IN_SECTION).toMatch(/no manual sign-in/i);
+  });
+
+  it('names the one sign-in that is by hand: Google, once, in the browser card', () => {
+    // The old copy said there was no manual sign-in at all. There is one now,
+    // and only one, and the agent has to know where it is rather than either
+    // denying it or sending the student to Settings for it.
+    expect(SIGN_IN_SECTION).toMatch(/Google/);
+    expect(SIGN_IN_SECTION).toMatch(/browser card/i);
+    expect(SIGN_IN_SECTION).not.toMatch(/no manual sign-in/i);
   });
 
   it('says plainly that it can reach those sites', () => {
@@ -48,6 +56,23 @@ describe('what the browser skill adds', () => {
 
   it('gives somewhere real to go when no sign-in is saved', () => {
     expect(BROWSER.body).toMatch(/Settings, Connections, Sites/);
+  });
+
+  it('tells the agent to use sign_in when a page asks to be signed in', () => {
+    expect(BROWSER.body).toMatch(/`sign_in`/);
+  });
+
+  it('says a password box takes the saved sign-in rather than refusing', () => {
+    // The refusal is what the student saw as "it types the username and then
+    // stops". The tool now signs in; the prompt must not still say it refuses.
+    expect(BROWSER.body).not.toMatch(/which refuses/i);
+    expect(BROWSER.body).not.toMatch(/nothing is ever typed into a password box/i);
+  });
+
+  it('sends Google to the browser card, once, and never says it cannot be connected', () => {
+    expect(BROWSER.body).toMatch(/browser card/i);
+    expect(BROWSER.body).not.toMatch(/cannot get past/i);
+    expect(BROWSER.body).not.toMatch(/cannot connect one/i);
   });
 
   it('tells the agent the refresh returns the site, not a promise', () => {

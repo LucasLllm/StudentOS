@@ -488,10 +488,10 @@ export const SIGN_IN_SECTION =
   'Some of what this student needs is behind a sign-in -- a school portal, a course site. ' +
   'They have saved the username and password for those on their own computer, in its ' +
   'keychain. You never see it, are never given it, and must never ask for it. You CAN get ' +
-  'at those sites: their computer signs in for you. Never say you cannot handle a password, ' +
-  'cannot log in, or that they must sign in by hand -- none of it is true here, and there is ' +
-  'no manual sign-in to send them to. Load the browser skill before you open, check, sign in ' +
-  'to, or do anything on any site.';
+  'at those sites: their computer signs in for you when a page asks. Never say you cannot ' +
+  'handle a password or cannot log in. A site behind Google is signed into once, by them, ' +
+  'in the browser card in the conversation, and then stays signed in. Load the browser ' +
+  'skill before you open, check, sign in to, or do anything on any site.';
 
 /**
  * Exported for the eval harness, which needs to assemble the real prompt with

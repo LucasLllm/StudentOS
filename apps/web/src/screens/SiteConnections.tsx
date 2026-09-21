@@ -178,7 +178,7 @@ export function SiteConnections() {
     if (added.value && added.value.signedIn === false) {
       alert(
         `Added ${name.trim()}, but that sign-in did not work: ${added.value.reason ?? 'the site refused it'}.\n\n` +
-          'If the site signs in through Google, a username and password cannot get past it.',
+          'If the site signs in through Google, sign in once in the browser card in a conversation and it stays signed in.',
       );
     }
   }
@@ -227,8 +227,8 @@ export function SiteConnections() {
         <div className="saved-signin">
           <p className="muted small">
             Kept in your Mac&rsquo;s keychain on this computer. It is never sent to Contexto Agent,
-            and only works for sites with a normal username and password &mdash; not ones behind
-            Google.
+            and works for sites with a normal username and password. For a site behind Google, sign
+            in once in the browser card in a conversation and it stays signed in.
           </p>
           <div className="add-site">
             <input
@@ -265,7 +265,8 @@ export function SiteConnections() {
         <div className="saved-signin">
           <p className="muted small">
             Your sign-in is kept in this Mac&rsquo;s keychain and never sent to Contexto Agent. It
-            works for sites with a normal username and password &mdash; not ones behind Google.
+            works for sites with a normal username and password. For a site behind Google, sign in
+            once in the browser card in a conversation and it stays signed in.
           </p>
           <div className="add-site">
             <input
