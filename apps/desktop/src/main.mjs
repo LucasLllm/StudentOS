@@ -312,6 +312,7 @@ handle('siteSession', () => ({
   showing: Boolean(activeSession?.view),
   portalId: activeSession?.portalId ?? null,
   agentId: activeSession?.agentId ?? null,
+  frame: activeSession?.view ? lastFrame : null,
 }));
 
 handle('siteViewBounds', (bounds) => {
@@ -446,10 +447,12 @@ ipcMain.on('site-view-clicked', () => {
 function attachSiteView(session) {
   if (!mainWindow || mainWindow.isDestroyed() || !session?.view) return;
 
-  // Whatever was left on screen from last time makes way for this.
+  // Whatever was left on screen from last time makes way for this, and its
+  // last still goes with it.
   if (activeSession && activeSession !== session) {
     mainWindow.contentView.removeChildView(activeSession.view);
     activeSession.destroy();
+    lastFrame = null;
   }
 
   // Kept after the work finishes: the page the agent ended on is the evidence
@@ -476,20 +479,52 @@ function detachSiteView() {
   }
 }
 
+/** The size a parked view lays out at: a laptop's, so the page reads as a page. */
+const PARKED = { width: 1200, height: 800 };
+
 function applySiteViewBounds() {
   if (!activeSession?.view) return;
   /*
-   * Hidden until the page says where it goes, rather than parked off-screen
-   * as a ten-pixel sliver. The sliver still counted as showing, so a missing
-   * bounds report looked like a browser that had loaded nothing -- an empty
-   * box, which is worse than no box.
+   * Parked, not hidden, until the page says where it goes.
+   *
+   * A hidden view is not drawn, and a view that is not drawn cannot be
+   * captured -- and once hidden, showing it again off to the side does not
+   * bring the frames back (measured). One pixel inside the window keeps it
+   * drawn and out of sight, and the card in the conversation shows a still
+   * of it, so nothing on screen reads as an empty browser.
    */
   if (!siteViewBounds) {
-    activeSession.view.setVisible(false);
+    const [width] = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getContentSize() : [1];
+    activeSession.view.setVisible(true);
+    activeSession.view.setBounds({ x: width - 1, y: 0, ...PARKED });
     return;
   }
   activeSession.view.setVisible(true);
   activeSession.view.setBounds(siteViewBounds);
+}
+
+/** The last still sent, so a conversation coming back can ask for it. */
+let lastFrame = null;
+
+/**
+ * A still of the page, to the conversation it belongs to.
+ *
+ * Kept as well as sent: a student who leaves the conversation and comes back
+ * has missed the event, and the panel asks on mount, the same way it asks
+ * whether a browser is there at all.
+ */
+function sendSiteFrame(session, frame) {
+  lastFrame = frame;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const wc = session.view?.webContents;
+  const live = wc && !wc.isDestroyed();
+  mainWindow.webContents.send('site-frame', {
+    agentId: session.agentId,
+    portalId: session.portalId,
+    title: live ? wc.getTitle() : '',
+    url: live ? wc.getURL() : '',
+    frame,
+  });
 }
 
 /**
@@ -577,7 +612,7 @@ app.on('second-instance', () => showWindow());
 
 void app.whenReady().then(async () => {
   if (!onlyCopy) return;
-  observeSessions({ open: attachSiteView, close: markSiteViewIdle });
+  observeSessions({ open: attachSiteView, close: markSiteViewIdle, frame: sendSiteFrame });
   attachSession();
   await ensureSession();
   showWindow();

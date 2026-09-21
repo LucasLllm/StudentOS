@@ -187,6 +187,32 @@ export class SiteSession {
   }
 
   /**
+   * A still of the page, small, or null when there is nothing to capture.
+   *
+   * capturePage returns nothing for a view that is not being drawn -- one
+   * hidden, or one that was hidden and then shown again off to the side --
+   * which is why the window parks a view instead of hiding it. Measured:
+   * parked one pixel inside the window, every capture is fresh. Half scale,
+   * because it is a thumbnail in a chat card and not the page itself.
+   */
+  async capture() {
+    const wc = this.webContents;
+    if (!wc || wc.isDestroyed()) return null;
+    try {
+      const image = await Promise.race([
+        wc.capturePage(),
+        new Promise((r) => setTimeout(() => r(null), 3000)),
+      ]);
+      if (!image || image.isEmpty()) return null;
+      const { width } = image.getSize();
+      const small = width > 2 ? image.resize({ width: Math.round(width / 2) }) : image;
+      return `data:image/jpeg;base64,${small.toJPEG(60).toString('base64')}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Finish with the page, and usually leave it on screen.
    *
    * The last thing the agent looked at is worth keeping: a browser that

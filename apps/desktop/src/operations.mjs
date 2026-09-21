@@ -24,11 +24,26 @@ import { DeviceUnlinked, pushSnapshot, readConfig, writeConfig } from './sync.mj
  */
 let onSessionOpen = null;
 let onSessionClose = null;
+let onSessionFrame = null;
 
-/** Let the app show what the agent is doing. Optional: the CLI sets neither. */
-export function observeSessions({ open, close }) {
+/** Let the app show what the agent is doing. Optional: the CLI sets none. */
+export function observeSessions({ open, close, frame }) {
   onSessionOpen = open;
   onSessionClose = close;
+  onSessionFrame = frame ?? null;
+}
+
+/**
+ * Hand the app a still of the page, when there is anyone to show it to.
+ *
+ * Only a conversation's work has a card to put it in: a scheduled sync has
+ * nowhere, and the CLI's browser has no view to capture. A capture that
+ * fails costs the picture and nothing else.
+ */
+async function reportFrame(browser) {
+  if (!onSessionFrame || !browser?.capture || !showsInChat(browser)) return;
+  const frame = await browser.capture();
+  if (frame) onSessionFrame(browser, frame);
 }
 
 /** Set while doing work an agent asked for, so its browser can be shown there. */
@@ -249,6 +264,7 @@ export async function browsePage(url) {
     // Give a page that builds itself a moment to do so.
     await new Promise((r) => setTimeout(r, 2500));
     const read = await evaluate(browser, SNAPSHOT_SCRIPT);
+    await reportFrame(browser);
     await browser.close();
     return JSON.parse(read);
   } catch (error) {
@@ -284,6 +300,7 @@ export async function actOnPage(action) {
         return site ? readCredentials(site.id) : null;
       },
     });
+    await reportFrame(browser);
     await browser.close();
     return read;
   } catch (error) {

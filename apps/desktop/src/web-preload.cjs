@@ -43,6 +43,12 @@ contextBridge.exposeInMainWorld('contextoDesktop', {
     ipcRenderer.on('site-view-clicked', handler);
     return () => ipcRenderer.removeListener('site-view-clicked', handler);
   },
+  /** A still of the page the agent is on, after each step. The site cannot send this. */
+  onSiteFrame: (fn) => {
+    const handler = (_e, payload) => fn(payload);
+    ipcRenderer.on('site-frame', handler);
+    return () => ipcRenderer.removeListener('site-frame', handler);
+  },
   getSiteSession: () => ipcRenderer.invoke('siteSession'),
   onSitesChanged: (fn) => ipcRenderer.on('portals-changed', () => fn()),
 });
