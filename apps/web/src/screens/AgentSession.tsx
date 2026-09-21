@@ -25,7 +25,7 @@ import { useAgentSession } from '../lib/useAgentSession.js';
  */
 export function AgentSession({ agentId, working }: { agentId: string; working: boolean }) {
   const bridge = desktop();
-  const { active, showing, portalId } = useAgentSession(agentId);
+  const { active, showing, portalId, frame: still } = useAgentSession(agentId);
   /*
    * Lit for the whole time the agent is working, not only while a page is
    * being driven. Between two steps it is still working, and a glow that
@@ -130,22 +130,33 @@ export function AgentSession({ agentId, working }: { agentId: string; working: b
             </svg>
           </span>
         </span>
-        <span className="agent-browser-preview">
-          <span className="agent-browser-preview-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <path
-                d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span className="agent-browser-preview-text">
-            {lit ? `Working in ${site}…` : 'Click to open'}
-          </span>
+        {/*
+          What the agent is looking at, as a still the app takes after every
+          step. Before the first one arrives the card says what it is doing;
+          after, it shows it.
+        */}
+        <span className={`agent-browser-preview${still ? ' has-still' : ''}`}>
+          {still ? (
+            <img className="agent-browser-still" src={still} alt="" />
+          ) : (
+            <>
+              <span className="agent-browser-preview-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22">
+                  <path
+                    d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+              <span className="agent-browser-preview-text">
+                {lit ? `Working in ${site}…` : 'Click to open'}
+              </span>
+            </>
+          )}
         </span>
       </button>
 

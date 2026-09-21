@@ -1542,6 +1542,21 @@ a.button {
   font-size: 0.85rem;
 }
 
+/* The still of the page fills the preview edge to edge, top of the page first. */
+.agent-browser-preview.has-still {
+  padding: 0;
+  min-height: 0;
+}
+
+.agent-browser-still {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 14rem;
+  object-fit: cover;
+  object-position: top center;
+}
+
 /* The open browser: a fixed panel, where a native view on top is exactly right. */
 .agent-browser-overlay {
   position: fixed;

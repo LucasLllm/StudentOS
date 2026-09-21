@@ -7,6 +7,8 @@ export interface AgentSessionState {
   /** There is a page on screen, working or not. */
   showing: boolean;
   portalId?: string;
+  /** A still of the page, as a data URL, from after the agent's last step. */
+  frame?: string;
 }
 
 /**
@@ -48,7 +50,12 @@ export function useAgentSession(agentId: string): AgentSessionState {
       const now = reply?.value;
       if (!now?.showing) return;
       if (!belongsInChat(now.agentId, agentId)) return;
-      setState({ active: now.active, showing: true, portalId: now.portalId ?? undefined });
+      setState({
+        active: now.active,
+        showing: true,
+        portalId: now.portalId ?? undefined,
+        frame: now.frame ?? undefined,
+      });
     });
 
     /*
@@ -57,15 +64,24 @@ export function useAgentSession(agentId: string): AgentSessionState {
      */
     const stop = bridge?.onSiteSession?.((payload) => {
       if (!belongsInChat(payload.agentId, agentId)) return;
-      setState({
+      setState((was) => ({
         active: payload.active,
         // The page stays after the work ends. A browser that vanishes with
         // the spinner takes the evidence of what it did with it.
         showing: payload.active || Boolean(payload.showing),
         portalId: payload.portalId,
-      });
+        // The still is of the page, not the work: it outlives the spinner too.
+        frame: was.frame,
+      }));
     });
-    return () => stop?.();
+    const stopFrames = bridge?.onSiteFrame?.((payload) => {
+      if (!belongsInChat(payload.agentId, agentId)) return;
+      setState((was) => ({ ...was, showing: true, frame: payload.frame }));
+    });
+    return () => {
+      stop?.();
+      stopFrames?.();
+    };
   }, [agentId]);
 
   return state;

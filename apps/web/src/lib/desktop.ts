@@ -61,10 +61,27 @@ export interface DesktopBridge {
   ): (() => void) | undefined;
   /** A click landed on the browser view. The site itself cannot send this. */
   onSiteViewClick?(fn: () => void): (() => void) | undefined;
+  /** A still of the page the agent is on, after each step. The site cannot send this. */
+  onSiteFrame?(
+    fn: (payload: {
+      agentId?: string | null;
+      portalId?: string;
+      title?: string;
+      url?: string;
+      frame: string;
+    }) => void,
+  ): (() => void) | undefined;
   /** What is on screen now. Asked on mount, so leaving a chat does not lose it. */
   getSiteSession?(): Promise<{
     ok: boolean;
-    value?: { active: boolean; showing: boolean; portalId: string | null; agentId: string | null };
+    value?: {
+      active: boolean;
+      showing: boolean;
+      portalId: string | null;
+      agentId: string | null;
+      /** The last still sent, when there is a browser to have taken it of. */
+      frame?: string | null;
+    };
   }>;
 }
 
