@@ -360,23 +360,34 @@ describe('signing in', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const ORIGIN = 'https://studyo.app';
   const isFill = (script) => script.includes('no-sign-in-field');
+  const isStepCheck = (script) => script.includes('second-factor');
 
-  /** A page that reports its origin, takes the fill, and calls a box a password box. */
-  const signInPage =
-    (outcome = 'signed-password') =>
-    (script) =>
-      script.includes('location.origin')
-        ? JSON.stringify({ origin: ORIGIN })
-        : isFill(script)
-          ? outcome
-          : script.includes('data-contexto-ref')
-            ? JSON.stringify({ password: true })
-            : JSON.stringify({ ok: true });
+  /**
+   * A page that walks through the states it is given, one per fill, then rests
+   * on 'none' (signed in). STEP_CHECK peeks the current state; the fill
+   * consumes it. Each state carries the origin the page is on for that step.
+   */
+  const signInFlow = (steps) => {
+    const queue = [...steps];
+    return (script) => {
+      if (isStepCheck(script)) return queue.length ? queue[0].state : 'none';
+      if (script.includes('location.origin'))
+        return JSON.stringify({ origin: queue.length ? queue[0].origin : 'https://studyo.app' });
+      if (isFill(script)) {
+        queue.shift();
+        return 'signed';
+      }
+      if (script.includes('data-contexto-ref')) return JSON.stringify({ password: true });
+      return JSON.stringify({ ok: true });
+    };
+  };
 
   const pressedEnter = (session) =>
-    session.sent.some((s) => s.method === 'Input.dispatchKeyEvent' && s.key === 'Enter');
+    session.sent.filter(
+      (s) => s.method === 'Input.dispatchKeyEvent' && s.key === 'Enter' && s.type === 'keyDown',
+    ).length;
+  const fillsEvaluated = (session) => session.evaluate.mock.calls.map((c) => c[0]).filter(isFill);
 
   async function runAction(session, action, opts) {
     const done = performAction(session, action, opts);
@@ -385,28 +396,52 @@ describe('signing in', () => {
     return done;
   }
 
-  const fillsEvaluated = (session) => session.evaluate.mock.calls.map((c) => c[0]).filter(isFill);
-
-  it('asks the keychain for the page origin and fills the form with what it gave', async () => {
-    const session = fakeSession(signInPage());
+  it('signs in across every page it takes, filling each from the keychain', async () => {
+    // The studyo -> Google shape: the site's own email, then Google's email,
+    // then Google's password, then signed in.
+    const session = fakeSession(
+      signInFlow([
+        { state: 'username', origin: 'https://accounts.studyo.app' },
+        { state: 'username', origin: 'https://accounts.google.com' },
+        { state: 'password', origin: 'https://accounts.google.com' },
+      ]),
+    );
     const asked = [];
     const credentialsFor = (origin) => {
       asked.push(origin);
       return { username: 'alice', password: 'hunter2' };
     };
     const after = await runAction(session, { action: 'sign_in' }, { credentialsFor });
-    expect(asked).toEqual([ORIGIN]);
-    const fills = fillsEvaluated(session);
-    expect(fills).toHaveLength(1);
-    expect(fills[0]).toContain('"alice"');
-    expect(fills[0]).toContain('"hunter2"');
-    // Submitted by a real Enter, not by the page's own form.
-    expect(pressedEnter(session)).toBe(true);
+    expect(asked).toEqual([
+      'https://accounts.studyo.app',
+      'https://accounts.google.com',
+      'https://accounts.google.com',
+    ]);
+    expect(fillsEvaluated(session)).toHaveLength(3);
+    expect(pressedEnter(session)).toBe(3);
     expect(after.title).toBe('X');
   });
 
+  it('stands back when a second factor only the student can answer appears', async () => {
+    const session = fakeSession(
+      signInFlow([
+        { state: 'password', origin: 'https://accounts.google.com' },
+        { state: 'second-factor', origin: 'https://accounts.google.com' },
+      ]),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    // It filled the password once, then met the second factor and stopped --
+    // it did not try to fill or submit that step.
+    expect(fillsEvaluated(session)).toHaveLength(1);
+    expect(pressedEnter(session)).toBe(1);
+  });
+
   it('refuses, with somewhere to go, when nothing is saved for that origin', async () => {
-    const session = fakeSession(signInPage());
+    const session = fakeSession(signInFlow([{ state: 'username', origin: 'https://studyo.app' }]));
     await expect(
       runAction(session, { action: 'sign_in' }, { credentialsFor: () => null }),
     ).rejects.toThrow(/no saved sign-in/i);
@@ -414,12 +449,12 @@ describe('signing in', () => {
   });
 
   it('refuses when nobody can answer for the keychain at all', async () => {
-    const session = fakeSession(signInPage());
+    const session = fakeSession(signInFlow([{ state: 'username', origin: 'https://studyo.app' }]));
     await expect(runAction(session, { action: 'sign_in' })).rejects.toThrow(/no saved sign-in/i);
   });
 
   it('says so when the page is not asking for a sign-in', async () => {
-    const session = fakeSession(signInPage('no-sign-in-field'));
+    const session = fakeSession(signInFlow([]));
     await expect(
       runAction(
         session,
@@ -430,7 +465,7 @@ describe('signing in', () => {
   });
 
   it('types the saved sign-in, never the agent text, into a password box', async () => {
-    const session = fakeSession(signInPage());
+    const session = fakeSession(signInFlow([{ state: 'password', origin: 'https://studyo.app' }]));
     const credentialsFor = () => ({ username: 'alice', password: 'hunter2' });
     await runAction(
       session,

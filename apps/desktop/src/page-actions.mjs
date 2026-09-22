@@ -399,30 +399,80 @@ export async function pressKey(cdp, name) {
 const ORIGIN = `JSON.stringify({ origin: location.origin })`;
 
 /**
- * Sign in with what this machine saved for the site, and nothing else.
+ * What the page is asking for right now, without touching it.
  *
- * The keychain is asked for the page's origin, and answers only for a site
- * that origin belongs to; the answer goes into the page and nowhere else.
- * The agent never holds it, and a page from anywhere else gets nothing,
- * however it asks.
+ * 'password' or 'username' when a visible box of that kind is on the page,
+ * 'second-factor' when it is past the password and wants something only the
+ * student has, and 'none' when it is asking for no sign-in at all -- signed
+ * in, or somewhere else entirely. Read before each step so the sign-in knows
+ * whether it is done, whether to fill, and when to stand back.
+ */
+const STEP_CHECK = `(() => {
+  const shown = (el) => {
+    if (!el || el.disabled) return false;
+    const s = el.style;
+    if (s && (s.display === 'none' || s.visibility === 'hidden')) return false;
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  };
+  const text = (document.body && document.body.innerText) || '';
+  if (/\\b(2-step|two-step|2-factor|verify it.s you|verify your identity|passkey|authenticator|enter the code|verification code|tap yes|check your (phone|device)|approve this sign)\\b/i.test(text))
+    return 'second-factor';
+  const pw = Array.from(document.querySelectorAll('input[type=password]')).find(shown);
+  if (pw) return 'password';
+  const user = Array.from(document.querySelectorAll('input')).find(
+    (i) => /^(text|email|tel)$/.test(i.type) && shown(i),
+  );
+  if (user) return 'username';
+  return 'none';
+})()`;
+
+/**
+ * Sign in with what this machine saved, across as many pages as it takes.
+ *
+ * A sign-in is rarely one page: a site asks for an email, then a password; a
+ * site that signs in through Google hands off to a Google page that asks the
+ * same, one field at a time. So this drives the whole run rather than one
+ * field -- read what the page wants, fill it from the keychain for that page's
+ * own site, press a real Enter, wait, and look again -- until it is in, or a
+ * second factor only the student can answer stops it. The keychain is asked
+ * per page, so it answers for the site's own pages and that site's Google
+ * step and nowhere else; the answer goes into the page and never to the agent.
  */
 async function signInFromKeychain(session, credentialsFor) {
-  const { origin } = await run(session, ORIGIN);
-  const saved = origin ? await credentialsFor?.(origin) : null;
-  if (!saved) {
-    throw new ActionError(
-      'There is no saved sign-in for this site. Tell the student they can sign in once in the ' +
-        'browser card in this conversation and it stays signed in, or save a sign-in under ' +
-        'Settings, Connections, Sites.',
-    );
+  const wc = session.webContents;
+  const seen = new Set();
+  for (let step = 0; step < 5; step += 1) {
+    const state = await session.evaluate(STEP_CHECK);
+    if (state === 'second-factor') return; // The student finishes this one step.
+    if (state === 'none') {
+      if (step === 0) throw new ActionError('This page is not asking for a sign-in. Look again.');
+      return; // Nothing left to fill: signed in, or a page that is not ours.
+    }
+    const { origin } = await run(session, ORIGIN);
+    const saved = origin ? await credentialsFor?.(origin) : null;
+    if (!saved) {
+      if (step === 0) {
+        throw new ActionError(
+          'There is no saved sign-in for this site. Tell the student they can sign in once in ' +
+            'the browser card in this conversation and it stays signed in, or save a sign-in ' +
+            'under Settings, Connections, Sites.',
+        );
+      }
+      return; // As far as the saved sign-in reaches; a later page is not ours to fill.
+    }
+    // A page that comes back the same after a fill did not advance -- a refused
+    // sign-in, or a step this cannot work -- so stop rather than spin on it.
+    const mark = `${origin}|${state}`;
+    if (seen.has(mark)) return;
+    seen.add(mark);
+    await session.evaluate(signInScript(saved.username, saved.password));
+    // Submit by the keyboard, not the page: a real Enter is what Google's Next
+    // answers to, and an ordinary form submits on it too.
+    await pressKey(session.cdp, 'Enter');
+    await settle(wc, async () => {}, { quietMs: 1000 });
+    // Google draws its next step after the load settles, so give it a moment.
+    await new Promise((r) => setTimeout(r, 800));
   }
-  const outcome = await session.evaluate(signInScript(saved.username, saved.password));
-  if (outcome !== 'signed-password' && outcome !== 'signed-username') {
-    throw new ActionError('This page is not asking for a sign-in. Look at the page again.');
-  }
-  // Submit by the keyboard, not by the page: a real Enter in the focused field
-  // is what Google's Next answers to, and an ordinary form submits on it too.
-  await pressKey(session.cdp, 'Enter');
 }
 
 async function type(session, ref, text, submit, credentialsFor) {
@@ -508,7 +558,8 @@ export async function performAction(session, action, { credentialsFor } = {}) {
       );
       break;
     case 'sign_in':
-      await settle(wc, () => signInFromKeychain(session, credentialsFor));
+      // Drives its own pages and waits between them, so it is not wrapped here.
+      await signInFromKeychain(session, credentialsFor);
       break;
     case 'press':
       await settle(wc, () => pressKey(session.cdp, action.key));
