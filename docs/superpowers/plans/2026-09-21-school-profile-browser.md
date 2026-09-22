@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **The agent never receives a password.** Credentials are read from the keychain on the student's computer, at the moment of typing, and go into the page and nowhere else. No credential value crosses the desktop↔server boundary or reaches the agent package.
-- **A saved password only goes to the origin it was saved for.** Match the page's origin against a connected site's stored origin exactly — full origin, never a host suffix.
+- **A saved password only goes to the site it was saved for.** The page must be on the site's own host or a subdomain of it, over https — never a host that merely contains the name (measured on Studyo, whose sign-in form is on accounts.studyo.app).
 - **A password box never reports what it holds.** The snapshot already omits its value and `renderElements` drops it; both stay.
 - **One implementation of form-filling.** The browser the student watches and every other path fill a sign-in the same way, through the helpers in `sign-in.mjs`; do not add a second filler.
 - **Desktop is ESM `.mjs`, no TypeScript.** Match the surrounding file's style and comment voice.

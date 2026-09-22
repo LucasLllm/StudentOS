@@ -206,6 +206,31 @@ export async function addSiteWithSignIn({ name, url, username, password }) {
 }
 
 /**
+ * Whether a page belongs to a connected site, as far as a saved sign-in goes.
+ *
+ * The site's own host or any subdomain of it, over https. Measured on
+ * Studyo: the site is studyo.app and its sign-in form is on
+ * accounts.studyo.app, so an exact match refused to fill it. A subdomain is
+ * the site's own -- the rule a browser's password manager uses too. A host
+ * that merely contains the name is not, nor is the site's parent, nor the
+ * site over plain http, where a password would travel in the clear.
+ */
+export function sameSite(siteOrigin, pageOrigin) {
+  let site;
+  let page;
+  try {
+    site = new URL(siteOrigin);
+    page = new URL(pageOrigin ?? '');
+  } catch {
+    return false;
+  }
+  if (site.protocol !== 'https:' || page.protocol !== 'https:') return false;
+  const own = site.hostname.toLowerCase();
+  const host = page.hostname.toLowerCase();
+  return host === own || host.endsWith(`.${own}`);
+}
+
+/**
  * The page the agent last left open, if it is still there.
  *
  * Held so the next step can land on it. Gone once a sync or a different site
@@ -240,10 +265,11 @@ function resumeBrowser(session) {
  */
 export async function browsePage(url) {
   const target = new URL(url);
-  const site = listPortals().find((p) => p.origin === target.origin);
+  const site = listPortals().find((p) => sameSite(p.origin, target.origin));
   // Only a name now: every view shares one store, so a page behind a login
   // the student has anywhere in it simply opens. A connected site is called
-  // by its name in the conversation; anything else by its host.
+  // by its name in the conversation, its sign-in host included; anything
+  // else by its host.
   const label = site ? site.id : target.host;
 
   /*
@@ -291,12 +317,12 @@ export async function actOnPage(action) {
   try {
     const read = await performAction(browser, action, {
       /*
-       * The keychain, asked from here and only for an exact origin. A saved
-       * sign-in reaches its own site and no other, whatever page is asking,
-       * and the answer never leaves this process.
+       * The keychain, asked from here and only for the page's own site. A
+       * saved sign-in reaches that site and no other, whatever page is
+       * asking, and the answer never leaves this process.
        */
       credentialsFor: (origin) => {
-        const site = listPortals().find((p) => p.origin === origin);
+        const site = listPortals().find((p) => sameSite(p.origin, origin));
         return site ? readCredentials(site.id) : null;
       },
     });

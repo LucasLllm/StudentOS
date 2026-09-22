@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { portalIdFor } from './operations.mjs';
+import { portalIdFor, sameSite } from './operations.mjs';
+
+/**
+ * Where a saved sign-in may go.
+ *
+ * Measured on Studyo: the site is studyo.app and its sign-in form is on
+ * accounts.studyo.app, so an exact-origin rule refused to fill it. A site's
+ * own subdomains are the site -- that is the rule a browser's password
+ * manager uses too. Anything that merely contains the name is not.
+ */
+describe('sameSite', () => {
+  it('matches the site itself', () => {
+    expect(sameSite('https://studyo.app', 'https://studyo.app')).toBe(true);
+  });
+
+  it('matches a subdomain of the site, where sign-in forms live', () => {
+    expect(sameSite('https://studyo.app', 'https://accounts.studyo.app')).toBe(true);
+    expect(sameSite('https://studyo.app', 'https://login.eu.studyo.app')).toBe(true);
+  });
+
+  it('refuses a host that only contains the name', () => {
+    expect(sameSite('https://studyo.app', 'https://studyo.app.evil.example')).toBe(false);
+    expect(sameSite('https://studyo.app', 'https://evilstudyo.app')).toBe(false);
+    expect(sameSite('https://studyo.app', 'https://studyo.apps')).toBe(false);
+  });
+
+  it('refuses the site over plain http, where a password would travel in the clear', () => {
+    expect(sameSite('https://studyo.app', 'http://studyo.app')).toBe(false);
+    expect(sameSite('https://studyo.app', 'http://accounts.studyo.app')).toBe(false);
+  });
+
+  it('refuses a parent of the site', () => {
+    // The saved site is the subdomain; its parent is somebody else's page.
+    expect(sameSite('https://portal.school.example', 'https://school.example')).toBe(false);
+  });
+
+  it('refuses junk', () => {
+    expect(sameSite('https://studyo.app', 'not a url')).toBe(false);
+    expect(sameSite('https://studyo.app', '')).toBe(false);
+    expect(sameSite('https://studyo.app', null)).toBe(false);
+  });
+});
 
 /**
  * Portal ids name a directory on disk holding a school session, so they have

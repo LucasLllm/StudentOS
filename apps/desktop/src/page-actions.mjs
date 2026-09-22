@@ -18,7 +18,7 @@
  * Two rules live here rather than in the prompt, so no page can talk the
  * agent out of them. The agent's own text never goes into a password field:
  * a password box takes only the sign-in this machine saved, read from the
- * keychain at that moment and only for the page's own origin -- an agent that
+ * keychain at that moment and only for the page's own site -- an agent that
  * could be made to type a password is an agent that could be made to type it
  * anywhere. And a password field's value is never reported, whatever it holds.
  */
@@ -401,9 +401,10 @@ const ORIGIN = `JSON.stringify({ origin: location.origin })`;
 /**
  * Sign in with what this machine saved for the site, and nothing else.
  *
- * The keychain is asked for the page's exact origin; the answer goes into
- * the page and nowhere else. The agent never holds it, and a page from
- * anywhere else gets nothing, however it asks.
+ * The keychain is asked for the page's origin, and answers only for a site
+ * that origin belongs to; the answer goes into the page and nowhere else.
+ * The agent never holds it, and a page from anywhere else gets nothing,
+ * however it asks.
  */
 async function signInFromKeychain(session, credentialsFor) {
   const { origin } = await run(session, ORIGIN);
