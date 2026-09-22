@@ -21,13 +21,15 @@ describe('what every agent is told about signing in', () => {
     expect(SIGN_IN_SECTION).toMatch(/must never ask for it/i);
   });
 
-  it('names the one sign-in that is by hand: Google, once, in the browser card', () => {
-    // The old copy said there was no manual sign-in at all. There is one now,
-    // and only one, and the agent has to know where it is rather than either
-    // denying it or sending the student to Settings for it.
+  it('says the machine signs in, Google included, and only a second step needs the student', () => {
+    // The old copy said there was no manual sign-in at all; then a later copy
+    // said Google was always by hand. Both are wrong now: the machine carries
+    // the saved sign-in through Google too, and only a phone-tap second step
+    // falls to the student.
     expect(SIGN_IN_SECTION).toMatch(/Google/);
     expect(SIGN_IN_SECTION).toMatch(/browser card/i);
     expect(SIGN_IN_SECTION).not.toMatch(/no manual sign-in/i);
+    expect(SIGN_IN_SECTION).not.toMatch(/signed into once, by them/i);
   });
 
   it('says plainly that it can reach those sites', () => {
@@ -60,6 +62,15 @@ describe('what the browser skill adds', () => {
 
   it('tells the agent to use sign_in when a page asks to be signed in', () => {
     expect(BROWSER.body).toMatch(/`sign_in`/);
+  });
+
+  it('tells the agent to keep signing in through the Google step, not hand it off', () => {
+    // The failure this fixes: the agent signed into the site, saw the Google
+    // page, and stopped -- when calling sign_in again would have carried the
+    // same saved sign-in through it.
+    expect(BROWSER.body).toMatch(/Google/);
+    expect(BROWSER.body).toMatch(/again/i);
+    expect(BROWSER.body).toMatch(/second step|phone|two-step|2-step/i);
   });
 
   it('says a password box takes the saved sign-in rather than refusing', () => {
