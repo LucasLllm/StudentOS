@@ -417,9 +417,12 @@ async function signInFromKeychain(session, credentialsFor) {
     );
   }
   const outcome = await session.evaluate(signInScript(saved.username, saved.password));
-  if (outcome !== 'submitted' && outcome !== 'submitted-username') {
+  if (outcome !== 'signed-password' && outcome !== 'signed-username') {
     throw new ActionError('This page is not asking for a sign-in. Look at the page again.');
   }
+  // Submit by the keyboard, not by the page: a real Enter in the focused field
+  // is what Google's Next answers to, and an ordinary form submits on it too.
+  await pressKey(session.cdp, 'Enter');
 }
 
 async function type(session, ref, text, submit, credentialsFor) {

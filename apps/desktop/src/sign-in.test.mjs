@@ -23,31 +23,34 @@ function form(inner) {
   return submitted;
 }
 
+/** happy-dom gives every element a client rect, so shown() sees them. */
 describe('signInScript', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('fills username and password and submits', () => {
-    const submitted = form(`<input type="text" name="u"><input type="password" name="p">`);
-    expect(run(signInScript('alice', 'hunter2'))).toBe('submitted');
+  it('fills username and password and focuses the password to submit', () => {
+    form(`<input type="text" name="u"><input type="password" name="p">`);
+    expect(run(signInScript('alice', 'hunter2'))).toBe('signed-password');
     expect(document.querySelector('input[type=text]').value).toBe('alice');
     expect(document.querySelector('input[type=password]').value).toBe('hunter2');
-    expect(submitted.count).toBe(1);
+    expect(document.activeElement).toBe(document.querySelector('input[type=password]'));
   });
 
   it('fills only the address on a page that asks for that first', () => {
-    const submitted = form(`<input type="email" name="identifier">`);
-    expect(run(signInScript('alice@example.com', 'hunter2'))).toBe('submitted-username');
+    form(`<input type="email" name="identifier">`);
+    expect(run(signInScript('alice@example.com', 'hunter2'))).toBe('signed-username');
     expect(document.querySelector('input[type=email]').value).toBe('alice@example.com');
-    expect(submitted.count).toBe(1);
+    expect(document.activeElement).toBe(document.querySelector('input[type=email]'));
   });
 
-  it('fills only the password on a page that asks for that alone', () => {
-    const submitted = form(`<input type="password" name="p">`);
-    expect(run(signInScript('alice', 'hunter2'))).toBe('submitted');
-    expect(document.querySelector('input[type=password]').value).toBe('hunter2');
-    expect(submitted.count).toBe(1);
+  it('keeps the password back while a hidden next-step password box is on the email page', () => {
+    // Google's email page carries a display:none password box for the next
+    // step. Filling it there would strand the password on the wrong page.
+    form(`<input type="email" name="identifier"><input type="password" style="display:none">`);
+    expect(run(signInScript('alice@example.com', 'hunter2'))).toBe('signed-username');
+    expect(document.querySelector('input[type=password]').value).toBe('');
+    expect(document.querySelector('input[type=email]').value).toBe('alice@example.com');
   });
 
   it('says so on a page with no sign-in on it', () => {

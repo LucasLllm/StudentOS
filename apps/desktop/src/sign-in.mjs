@@ -71,13 +71,55 @@ export function fillScript(username, password) {
 }
 
 /**
- * Build the expression that fills whichever sign-in step the page is showing.
+ * Build the expression that fills whichever sign-in step the page is showing,
+ * and leaves the caret where an Enter will submit it.
+ *
+ * It fills but does not submit. Measured on Google: its Next is not a form
+ * submit button and does not answer requestSubmit, so a page-script submit
+ * leaves the email typed and the page unmoved. The caller presses Enter by
+ * the keyboard path instead, which Google and an ordinary form both honour.
+ * The password step is taken only when a real, visible password box is on
+ * the page; Google's hidden next-step password box on the email page is not
+ * one, so the email is filled there and the password kept back.
  *
  * @returns {string} JavaScript to evaluate in the page; it resolves to
- *   'submitted', 'submitted-username' or 'no-sign-in-field'.
+ *   'signed-password', 'signed-username' or 'no-sign-in-field'.
  */
 export function signInScript(username, password) {
-  return script(username, password, { wholeForm: false });
+  return `(() => {
+    const set = (el, value) => {
+      const proto = el instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      setter ? setter.call(el, value) : (el.value = value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const shown = (el) => {
+      if (!el || el.disabled) return false;
+      const s = el.style;
+      if (s && (s.display === 'none' || s.visibility === 'hidden')) return false;
+      return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    };
+    const usable = (i) => /^(text|email|tel)$/.test(i.type) && shown(i);
+    const pw = Array.from(document.querySelectorAll('input[type=password]')).find(shown);
+    if (pw) {
+      const form = pw.form ?? document;
+      const inputs = Array.from(form.querySelectorAll('input'));
+      const before = inputs.slice(0, inputs.indexOf(pw)).reverse();
+      const user = before.find(usable)
+        ?? Array.from(form.querySelectorAll('input[type=email], input[type=text]')).find(usable);
+      if (user) set(user, ${JSON.stringify(username)});
+      set(pw, ${JSON.stringify(password)});
+      pw.focus();
+      return 'signed-password';
+    }
+    const user = Array.from(document.querySelectorAll('input')).find(usable);
+    if (!user) return 'no-sign-in-field';
+    set(user, ${JSON.stringify(username)});
+    user.focus();
+    return 'signed-username';
+  })()`;
 }
 
 /** Whether the page is still asking to be signed in, and where it ended up. */

@@ -365,7 +365,7 @@ describe('signing in', () => {
 
   /** A page that reports its origin, takes the fill, and calls a box a password box. */
   const signInPage =
-    (outcome = 'submitted') =>
+    (outcome = 'signed-password') =>
     (script) =>
       script.includes('location.origin')
         ? JSON.stringify({ origin: ORIGIN })
@@ -374,6 +374,9 @@ describe('signing in', () => {
           : script.includes('data-contexto-ref')
             ? JSON.stringify({ password: true })
             : JSON.stringify({ ok: true });
+
+  const pressedEnter = (session) =>
+    session.sent.some((s) => s.method === 'Input.dispatchKeyEvent' && s.key === 'Enter');
 
   async function runAction(session, action, opts) {
     const done = performAction(session, action, opts);
@@ -397,6 +400,8 @@ describe('signing in', () => {
     expect(fills).toHaveLength(1);
     expect(fills[0]).toContain('"alice"');
     expect(fills[0]).toContain('"hunter2"');
+    // Submitted by a real Enter, not by the page's own form.
+    expect(pressedEnter(session)).toBe(true);
     expect(after.title).toBe('X');
   });
 
