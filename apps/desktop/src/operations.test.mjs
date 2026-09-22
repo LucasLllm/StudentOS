@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { portalIdFor, sameSite } from './operations.mjs';
+import { portalIdFor, sameSite, signInPortalFor } from './operations.mjs';
+
+/**
+ * Which saved sign-in a page may be filled with.
+ *
+ * A page on a connected site's own host or subdomain uses that site's
+ * sign-in. The exception is the one the student asked for: a site that signs
+ * in through Google sends them to accounts.google.com, and the sign-in they
+ * saved for that site is the Google login it wants -- so during that site's
+ * own flow, and only then, a Google sign-in page uses it too. A bare visit to
+ * Google, with no connected site's flow behind it, gets nothing.
+ */
+describe('signInPortalFor', () => {
+  const portals = [
+    { id: 'studyo', origin: 'https://studyo.app' },
+    { id: 'moodle', origin: 'https://moodle.school.example' },
+  ];
+
+  it('uses the site itself, whatever flow is remembered', () => {
+    expect(signInPortalFor('https://accounts.studyo.app', portals, null)).toBe('studyo');
+    expect(signInPortalFor('https://studyo.app', portals, 'moodle')).toBe('studyo');
+  });
+
+  it('uses the flow site on Google, during that site sign-in', () => {
+    expect(signInPortalFor('https://accounts.google.com', portals, 'studyo')).toBe('studyo');
+  });
+
+  it('gives nothing on Google with no flow behind it', () => {
+    expect(signInPortalFor('https://accounts.google.com', portals, null)).toBe(null);
+  });
+
+  it('gives nothing on Google when the flow site is gone', () => {
+    expect(signInPortalFor('https://accounts.google.com', portals, 'deleted')).toBe(null);
+  });
+
+  it('does not let a flow leak the sign-in to some other site', () => {
+    // Mid-Studyo, the page wanders to an unrelated site: the saved sign-in
+    // stays for Studyo and its Google step, not for anywhere a page redirects.
+    expect(signInPortalFor('https://evil.example', portals, 'studyo')).toBe(null);
+    expect(signInPortalFor('https://login.microsoftonline.com', portals, 'studyo')).toBe(null);
+  });
+});
 
 /**
  * Where a saved sign-in may go.

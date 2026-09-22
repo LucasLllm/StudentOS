@@ -230,6 +230,62 @@ export function sameSite(siteOrigin, pageOrigin) {
   return host === own || host.endsWith(`.${own}`);
 }
 
+/** Google's sign-in page, where a "sign in with Google" flow ends up. */
+export function isGoogleSignIn(origin) {
+  try {
+    return new URL(origin).origin === 'https://accounts.google.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Which connected site's saved sign-in a page may be filled with, or null.
+ *
+ * A page on the site's own host or subdomain uses that site's sign-in. The
+ * exception is the one the student asked for: a site that signs in through
+ * Google sends them to accounts.google.com, and the sign-in they saved for
+ * that site is the Google login it wants. So while a connected site's own
+ * sign-in is under way -- flowPortalId names it -- a Google sign-in page uses
+ * that site's sign-in too. A bare visit to Google, with nothing behind it,
+ * gets nothing, and the flow never reaches any other site a page redirects to.
+ *
+ * @param {string} origin the page asking to be signed in
+ * @param {{ id: string, origin: string }[]} portals connected sites
+ * @param {string|null} flowPortalId the connected site currently being signed into
+ * @returns {string|null} the portal id whose sign-in to use
+ */
+export function signInPortalFor(origin, portals, flowPortalId) {
+  const direct = portals.find((p) => sameSite(p.origin, origin));
+  if (direct) return direct.id;
+  if (flowPortalId && isGoogleSignIn(origin) && portals.some((p) => p.id === flowPortalId)) {
+    return flowPortalId;
+  }
+  return null;
+}
+
+/**
+ * The connected site whose sign-in is currently under way, if any.
+ *
+ * Set while the agent's browsing is on a connected site's own pages, so that
+ * when the site hands off to Google the saved sign-in can follow it there --
+ * and only there. Never cleared by landing on Google, or the hand-off would
+ * clear the very thing it needs; cleared instead when a new conversation's
+ * browsing begins somewhere that is not a connected site.
+ */
+let flowPortal = null;
+
+/** Remember the flow site when a page belongs to one; leave it otherwise. */
+function rememberFlow(url) {
+  try {
+    const origin = new URL(url).origin;
+    const site = listPortals().find((p) => sameSite(p.origin, origin));
+    if (site) flowPortal = site.id;
+  } catch {
+    // Not a URL we can read; the flow is whatever it already was.
+  }
+}
+
 /**
  * The page the agent last left open, if it is still there.
  *
@@ -283,6 +339,10 @@ export async function browsePage(url) {
   const open = pageLeftOpen();
   const same = open && showsInChat(open) && open.agentId === workingForAgent;
   if (same) open.portalId = label;
+  // A fresh conversation's browsing starts no flow; opening a connected site
+  // starts its. This is the only place the flow resets, so it cannot carry
+  // from one conversation's sign-in into another's.
+  if (!same) flowPortal = site?.id ?? null;
   const browser = same ? resumeBrowser(open) : await openBrowser(label);
   current = browser.view ? browser : null;
   try {
@@ -290,6 +350,7 @@ export async function browsePage(url) {
     // Give a page that builds itself a moment to do so.
     await new Promise((r) => setTimeout(r, 2500));
     const read = await evaluate(browser, SNAPSHOT_SCRIPT);
+    rememberFlow(JSON.parse(read).url);
     await reportFrame(browser);
     await browser.close();
     return JSON.parse(read);
@@ -317,15 +378,17 @@ export async function actOnPage(action) {
   try {
     const read = await performAction(browser, action, {
       /*
-       * The keychain, asked from here and only for the page's own site. A
-       * saved sign-in reaches that site and no other, whatever page is
-       * asking, and the answer never leaves this process.
+       * The keychain, asked from here for the page's own site, or -- while
+       * that site's sign-in is under way -- for the Google page it hands off
+       * to. A saved sign-in reaches its own site and that site's Google step,
+       * and nowhere else, and the answer never leaves this process.
        */
       credentialsFor: (origin) => {
-        const site = listPortals().find((p) => sameSite(p.origin, origin));
-        return site ? readCredentials(site.id) : null;
+        const id = signInPortalFor(origin, listPortals(), flowPortal);
+        return id ? readCredentials(id) : null;
       },
     });
+    rememberFlow(read?.url);
     await reportFrame(browser);
     await browser.close();
     return read;
