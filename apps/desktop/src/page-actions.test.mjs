@@ -391,7 +391,17 @@ describe('signing in', () => {
    */
   const signInFlow = (steps, { google } = {}) => {
     let queue = [...steps];
+    // A step with `lag` keeps showing itself for that many looks after it is
+    // filled, the way Google's password page does while it checks.
+    let lagging = null;
     return (script) => {
+      if (lagging && (isStepCheck(script) || script.includes('location.origin'))) {
+        const shown = isStepCheck(script)
+          ? lagging.state
+          : JSON.stringify({ origin: lagging.origin });
+        if (isStepCheck(script) && --lagging.lag <= 0) lagging = null;
+        return shown;
+      }
       // The site's "Sign in with Google" button: pressing it swaps the rest of
       // the run for Google's pages.
       if (isGoogleButton(script)) {
@@ -404,7 +414,8 @@ describe('signing in', () => {
       if (script.includes('location.origin'))
         return JSON.stringify({ origin: queue.length ? queue[0].origin : 'https://studyo.app' });
       if (isFill(script)) {
-        queue.shift();
+        const filled = queue.shift();
+        if (filled?.lag) lagging = { ...filled };
         return 'signed';
       }
       if (script.includes('data-contexto-ref')) return JSON.stringify({ password: true });
@@ -449,6 +460,23 @@ describe('signing in', () => {
     expect(fillsEvaluated(session)).toHaveLength(3);
     expect(pressedEnter(session)).toBe(3);
     expect(after.title).toBe('X');
+  });
+
+  it('waits for a slow step to move on rather than calling it refused', async () => {
+    // Measured on Kognity: Google's password page sat unchanged for a few
+    // seconds after Enter while it checked, and the sign-in gave up on it.
+    const session = fakeSession(
+      signInFlow([
+        { state: 'username', origin: 'https://accounts.google.com', lag: 4 },
+        { state: 'password', origin: 'https://accounts.google.com' },
+      ]),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(fillsEvaluated(session)).toHaveLength(2);
   });
 
   it('stands back when a second factor only the student can answer appears', async () => {

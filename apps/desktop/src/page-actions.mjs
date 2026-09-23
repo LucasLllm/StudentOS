@@ -522,8 +522,28 @@ async function signInFromKeychain(session, credentialsFor) {
     // answers to, and an ordinary form submits on it too.
     await pressKey(session.cdp, 'Enter');
     await settle(wc, async () => {}, { quietMs: 1000 });
-    // Google draws its next step after the load settles, so give it a moment.
-    await new Promise((r) => setTimeout(r, 800));
+    await movedOn(session, origin, state);
+  }
+}
+
+/**
+ * Wait, up to ten seconds, for the page to leave the step just submitted.
+ *
+ * Google draws its next step after the load settles, and checking a password
+ * takes it a few seconds. Measured on Kognity: looking again at 1.8s found the
+ * password page still there, the sign-in called it refused and stopped, and
+ * Google signed in a moment later behind it. A page that has not moved after
+ * this long really did come back the same.
+ */
+async function movedOn(session, origin, state) {
+  for (let waited = 0; waited < 10_000; waited += 500) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      if ((await session.evaluate(STEP_CHECK)) !== state) return;
+      if ((await run(session, ORIGIN)).origin !== origin) return;
+    } catch {
+      return; // Asked mid-navigation: it is moving.
+    }
   }
 }
 
