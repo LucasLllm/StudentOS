@@ -18,7 +18,8 @@ import {
 import {
   actOnPage,
   autoSignIn,
-  addSiteWithSignIn,
+  addSite,
+  firstSignIn,
   observeSessions,
   browsePage,
   oneAtATime,
@@ -281,7 +282,15 @@ handle('signIn', async () => {
   return { via: 'browser', device };
 });
 
-handle('addPortal', (site) => addSiteWithSignIn(site));
+handle('addPortal', (site) => {
+  const portal = addSite(site);
+  // Added is added. The first sign-in and read follow quietly, and a site
+  // they do not work for is signed into by the agent when it opens it.
+  void drivingBrowser(() => firstSignIn(portal.id))
+    .catch(() => {})
+    .finally(notifyChanged);
+  return { portal };
+});
 handle('removePortal', (id) => removePortal(id));
 handle('syncPortal', (id) => syncPortal(id));
 

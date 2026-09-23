@@ -32,6 +32,10 @@ describe('what every agent is told about signing in', () => {
     expect(SIGN_IN_SECTION).not.toMatch(/signed into once, by them/i);
   });
 
+  it('says a site with no saved sign-in is signed into through Google', () => {
+    expect(SIGN_IN_SECTION).toMatch(/nothing saved.*Google/is);
+  });
+
   it('says plainly that it can reach those sites', () => {
     expect(SIGN_IN_SECTION).toMatch(/You CAN get at those sites/);
   });
@@ -71,6 +75,12 @@ describe('what the browser skill adds', () => {
     expect(BROWSER.body).toMatch(/Google/);
     expect(BROWSER.body).toMatch(/again/i);
     expect(BROWSER.body).toMatch(/second step|phone|two-step|2-step/i);
+  });
+
+  it('gives the order: the saved sign-in first, Google when there is none or it fails', () => {
+    expect(BROWSER.body).toMatch(/saved sign-in first/i);
+    expect(BROWSER.body).toMatch(/Sign in with Google/);
+    expect(BROWSER.body).toMatch(/account/i);
   });
 
   it('says a password box takes the saved sign-in rather than refusing', () => {

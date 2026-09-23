@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ActionError,
+  GOOGLE_BUTTON,
   KEYS,
   SNAPSHOT_SCRIPT,
   keyNamed,
@@ -99,6 +100,25 @@ describe('reading the page', () => {
   it('puts the number straight into the selector, so it must be a number', () => {
     expect(withElement(7, 'return 1;')).toContain('[data-contexto-ref="7"]');
     expect(withElement('7"] , body [x="', 'return 1;')).toContain('="NaN"');
+  });
+});
+
+describe('the "Sign in with Google" button', () => {
+  const press = () => JSON.parse((0, eval)(GOOGLE_BUTTON));
+
+  it('presses the sign-in one, not any other mention of Google', () => {
+    page(`<a href="#play">Get it on Google Play</a><button id="g">Continue with Google</button>`);
+    Element.prototype.getClientRects = () => [{}];
+    const pressed = vi.fn();
+    document.getElementById('g').addEventListener('click', pressed);
+    expect(press()).toEqual({ clicked: true });
+    expect(pressed).toHaveBeenCalledOnce();
+  });
+
+  it('says so when there is none', () => {
+    page(`<button>Sign in</button>`);
+    Element.prototype.getClientRects = () => [{}];
+    expect(press()).toEqual({ clicked: false });
   });
 });
 
@@ -362,15 +382,24 @@ describe('signing in', () => {
 
   const isFill = (script) => script.includes('no-sign-in-field');
   const isStepCheck = (script) => script.includes('second-factor');
+  const isGoogleButton = (script) => script.includes('clicked');
 
   /**
    * A page that walks through the states it is given, one per fill, then rests
    * on 'none' (signed in). STEP_CHECK peeks the current state; the fill
    * consumes it. Each state carries the origin the page is on for that step.
    */
-  const signInFlow = (steps) => {
-    const queue = [...steps];
+  const signInFlow = (steps, { google } = {}) => {
+    let queue = [...steps];
     return (script) => {
+      // The site's "Sign in with Google" button: pressing it swaps the rest of
+      // the run for Google's pages.
+      if (isGoogleButton(script)) {
+        if (!google) return JSON.stringify({ clicked: false });
+        queue = [...google];
+        google = null;
+        return JSON.stringify({ clicked: true });
+      }
       if (isStepCheck(script)) return queue.length ? queue[0].state : 'none';
       if (script.includes('location.origin'))
         return JSON.stringify({ origin: queue.length ? queue[0].origin : 'https://studyo.app' });
@@ -446,6 +475,53 @@ describe('signing in', () => {
       runAction(session, { action: 'sign_in' }, { credentialsFor: () => null }),
     ).rejects.toThrow(/no saved sign-in/i);
     expect(fillsEvaluated(session)).toEqual([]);
+  });
+
+  it('goes through Google when nothing is saved and the site offers it', async () => {
+    const session = fakeSession(
+      signInFlow([{ state: 'username', origin: 'https://studyo.app' }], {
+        google: [{ state: 'username', origin: 'https://accounts.google.com' }],
+      }),
+    );
+    // Nothing saved for Google either, so it stops on Google's page and hands
+    // that back rather than refusing.
+    const after = await runAction(session, { action: 'sign_in' }, { credentialsFor: () => null });
+    expect(after.title).toBe('X');
+    expect(fillsEvaluated(session)).toEqual([]);
+  });
+
+  it('goes through Google when the site has no form of its own, with the saved sign-in', async () => {
+    const session = fakeSession(
+      signInFlow([], {
+        google: [
+          { state: 'username', origin: 'https://accounts.google.com' },
+          { state: 'password', origin: 'https://accounts.google.com' },
+        ],
+      }),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(fillsEvaluated(session)).toHaveLength(2);
+  });
+
+  it('tries Google when the site will not take the saved sign-in', async () => {
+    const refused = { state: 'password', origin: 'https://studyo.app' };
+    const flow = signInFlow([refused, refused], {
+      google: [{ state: 'password', origin: 'https://accounts.google.com' }],
+    });
+    const session = fakeSession(flow);
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    // Once on the site, a second time that came back the same, then Google.
+    const asked = session.evaluate.mock.calls.map((c) => c[0]);
+    expect(asked.some(isGoogleButton)).toBe(true);
+    expect(fillsEvaluated(session)).toHaveLength(2);
   });
 
   it('refuses when nobody can answer for the keychain at all', async () => {

@@ -1266,6 +1266,40 @@ a.button {
   margin: 0 0 0.6rem;
 }
 
+/* The sign-in part of adding a site: there when needed, plainly skippable. */
+.optional-signin {
+  margin: 1rem 0 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--wash);
+}
+
+.optional-signin legend {
+  padding: 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.optional-signin .add-site {
+  margin-top: 0;
+}
+
+.optional-tag {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--ink-faint);
+  border: 1px solid var(--line-strong);
+}
+
+.saved-signin > .add-site:last-child {
+  align-items: center;
+}
+
 /* ---------- the browser the agent is driving ---------- */
 
 @keyframes agent-glow {

@@ -427,6 +427,34 @@ const STEP_CHECK = `(() => {
 })()`;
 
 /**
+ * Press the site's own "Sign in with Google" button, if it has one.
+ *
+ * The way in for a site that is behind Google, and the fallback for one whose
+ * own form would not take the saved sign-in. Never on Google's own pages,
+ * where the word is everywhere and no button of it leads anywhere new.
+ */
+export const GOOGLE_BUTTON = `(() => {
+  if (location.hostname === 'accounts.google.com') return JSON.stringify({ clicked: false });
+  const shown = (el) => {
+    if (!el || el.disabled) return false;
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden') return false;
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  };
+  const said = (el) =>
+    [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title'),
+      ...Array.from(el.querySelectorAll('img')).map((i) => i.alt)].join(' ');
+  const candidates = Array.from(
+    document.querySelectorAll('a, button, [role=button], input[type=submit], input[type=button]'),
+  ).filter((el) => shown(el) && /google/i.test(said(el)));
+  const button =
+    candidates.find((el) => /(sign|log)\\s*in|continue|with/i.test(said(el))) || candidates[0];
+  if (!button) return JSON.stringify({ clicked: false });
+  button.click();
+  return JSON.stringify({ clicked: true });
+})()`;
+
+/**
  * Sign in with what this machine saved, across as many pages as it takes.
  *
  * A sign-in is rarely one page: a site asks for an email, then a password; a
@@ -437,33 +465,57 @@ const STEP_CHECK = `(() => {
  * second factor only the student can answer stops it. The keychain is asked
  * per page, so it answers for the site's own pages and that site's Google
  * step and nowhere else; the answer goes into the page and never to the agent.
+ *
+ * Google is the other way in. With nothing saved, a site with no form of its
+ * own, or a saved sign-in the site will not take, it presses the site's
+ * "Sign in with Google" once and carries on from Google's page -- where the
+ * browser may already be signed in, or the saved sign-in fills Google's step.
  */
 async function signInFromKeychain(session, credentialsFor) {
   const wc = session.webContents;
   const seen = new Set();
-  for (let step = 0; step < 5; step += 1) {
+  let triedGoogle = false;
+  const throughGoogle = async () => {
+    if (triedGoogle) return false;
+    triedGoogle = true;
+    const { clicked } = await run(session, GOOGLE_BUTTON);
+    if (!clicked) return false;
+    await settle(wc, async () => {}, { quietMs: 1000 });
+    await new Promise((r) => setTimeout(r, 800));
+    return true;
+  };
+  for (let step = 0; step < 6; step += 1) {
     const state = await session.evaluate(STEP_CHECK);
     if (state === 'second-factor') return; // The student finishes this one step.
     if (state === 'none') {
-      if (step === 0) throw new ActionError('This page is not asking for a sign-in. Look again.');
+      if (step === 0) {
+        if (await throughGoogle()) continue;
+        throw new ActionError('This page is not asking for a sign-in. Look again.');
+      }
       return; // Nothing left to fill: signed in, or a page that is not ours.
     }
     const { origin } = await run(session, ORIGIN);
     const saved = origin ? await credentialsFor?.(origin) : null;
     if (!saved) {
+      if (await throughGoogle()) continue;
       if (step === 0) {
         throw new ActionError(
-          'There is no saved sign-in for this site. Tell the student they can sign in once in ' +
-            'the browser card in this conversation and it stays signed in, or save a sign-in ' +
-            'under Settings, Connections, Sites.',
+          'There is no saved sign-in for this site and no "Sign in with Google" button to ' +
+            'press. Tell the student they can sign in once in the browser card in this ' +
+            'conversation and it stays signed in, or save a sign-in under Settings, ' +
+            'Connections, Sites.',
         );
       }
       return; // As far as the saved sign-in reaches; a later page is not ours to fill.
     }
     // A page that comes back the same after a fill did not advance -- a refused
-    // sign-in, or a step this cannot work -- so stop rather than spin on it.
+    // sign-in, or a step this cannot work -- so try Google, or stop rather than
+    // spin on it.
     const mark = `${origin}|${state}`;
-    if (seen.has(mark)) return;
+    if (seen.has(mark)) {
+      if (await throughGoogle()) continue;
+      return;
+    }
     seen.add(mark);
     await session.evaluate(signInScript(saved.username, saved.password));
     // Submit by the keyboard, not the page: a real Enter is what Google's Next

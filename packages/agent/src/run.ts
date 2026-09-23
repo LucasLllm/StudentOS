@@ -486,10 +486,10 @@ export async function runAgentTurn(
 export const SIGN_IN_SECTION =
   'Sites that need a login:\n' +
   'Some of what this student needs is behind a sign-in -- a school portal, a course site. ' +
-  'They have saved the username and password for those on their own computer, in its ' +
+  'They may have saved the username and password for those on their own computer, in its ' +
   'keychain. You never see it, are never given it, and must never ask for it. You CAN get ' +
-  'at those sites: their computer signs in for you when a page asks, the Google step of a ' +
-  'sign-in included -- keep going until you are in. Never say you cannot handle a password ' +
+  'at those sites: their computer signs in when a page asks -- with nothing saved, through ' +
+  'Google -- keep going until you are in. Never say you cannot handle a password ' +
   'or cannot log in. Only a second step Google may ask for, a tap on their phone, needs ' +
   'them, in the browser card in the conversation. Load the browser skill before you open, ' +
   'check, sign in to, or do anything on any site.';

@@ -56,7 +56,7 @@ export function merge(server: ServerSite[], local: LocalSite[]): Row[] {
       id: site.id,
       label: site.name,
       origin: site.origin,
-      detail: signedIn ? 'signed in, not synced yet' : 'not signed in yet',
+      detail: signedIn ? 'signed in, not synced yet' : 'added, signs in when your agent opens it',
       enabled: true,
       signedIn,
     });
@@ -82,6 +82,7 @@ export function SiteConnections() {
   const [creds, setCreds] = useState({ username: '', password: '' });
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function load() {
     const res = await api.devices.sites.$get();
@@ -153,15 +154,17 @@ export function SiteConnections() {
   async function add() {
     if (!bridge) return;
     if (!name.trim() || !url.trim()) return alert('A name and address are needed.');
-    if (!creds.username.trim() || !creds.password)
-      return alert('A username and password are needed.');
+    // Optional, but half a sign-in is neither one thing nor the other.
+    if (Boolean(creds.username.trim()) !== Boolean(creds.password))
+      return alert('Fill in both the username and password, or leave both empty.');
 
     setBusy('add');
     const added = await bridge.addSite({
       name: name.trim(),
       url: url.trim(),
-      username: creds.username.trim(),
-      password: creds.password,
+      ...(creds.username.trim()
+        ? { username: creds.username.trim(), password: creds.password }
+        : {}),
     });
     // Cleared as soon as it is handed over. There is no reason for a password
     // to sit in a form once the keychain has it.
@@ -169,18 +172,10 @@ export function SiteConnections() {
     setBusy(null);
 
     if (!added.ok) return alert(added.error ?? 'Could not add that site.');
+    setNotice(`Added ${name.trim()}.`);
     setName('');
     setUrl('');
     await load();
-
-    // Adding now includes signing in, so say which of the three things
-    // happened rather than leaving a row that looks added but never fetched.
-    if (added.value && added.value.signedIn === false) {
-      alert(
-        `Added ${name.trim()}, but that sign-in did not work: ${added.value.reason ?? 'the site refused it'}.\n\n` +
-          'If the site signs in through Google, sign in once in the browser card in a conversation and it stays signed in.',
-      );
-    }
   }
 
   return (
@@ -226,9 +221,9 @@ export function SiteConnections() {
       {editing && (
         <div className="saved-signin">
           <p className="muted small">
-            Kept in your Mac&rsquo;s keychain on this computer. It is never sent to Contexto Agent,
-            and works for sites with a normal username and password. For a site behind Google, sign
-            in once in the browser card in a conversation and it stays signed in.
+            Kept in your Mac&rsquo;s keychain on this computer. It is never sent to Contexto Agent.
+            Your agent tries it first, and signs in with Google when there is none or the site does
+            not take it.
           </p>
           <div className="add-site">
             <input
@@ -263,11 +258,6 @@ export function SiteConnections() {
 
       {bridge ? (
         <div className="saved-signin">
-          <p className="muted small">
-            Your sign-in is kept in this Mac&rsquo;s keychain and never sent to Contexto Agent. It
-            works for sites with a normal username and password. For a site behind Google, sign in
-            once in the browser card in a conversation and it stays signed in.
-          </p>
           <div className="add-site">
             <input
               value={name}
@@ -282,25 +272,38 @@ export function SiteConnections() {
               aria-label="Site address"
             />
           </div>
+          <fieldset className="optional-signin">
+            <legend>
+              Username and password <span className="optional-tag">Optional</span>
+            </legend>
+            <p className="muted small">
+              Only if the site has its own login. Leave these empty for a site you sign into with
+              Google &mdash; your agent uses Google for it. Kept in this Mac&rsquo;s keychain, never
+              sent to Contexto Agent.
+            </p>
+            <div className="add-site">
+              <input
+                value={creds.username}
+                onChange={(e) => setCreds({ ...creds, username: e.target.value })}
+                placeholder="Username"
+                aria-label="Username (optional)"
+                autoComplete="off"
+              />
+              <input
+                type="password"
+                value={creds.password}
+                onChange={(e) => setCreds({ ...creds, password: e.target.value })}
+                placeholder="Password"
+                aria-label="Password (optional)"
+                autoComplete="new-password"
+              />
+            </div>
+          </fieldset>
           <div className="add-site">
-            <input
-              value={creds.username}
-              onChange={(e) => setCreds({ ...creds, username: e.target.value })}
-              placeholder="Username"
-              aria-label="Username"
-              autoComplete="off"
-            />
-            <input
-              type="password"
-              value={creds.password}
-              onChange={(e) => setCreds({ ...creds, password: e.target.value })}
-              placeholder="Password"
-              aria-label="Password"
-              autoComplete="new-password"
-            />
             <button className="primary" disabled={busy === 'add'} onClick={() => void add()}>
-              {busy === 'add' ? 'Signing in\u2026' : 'Add and sign in'}
+              {busy === 'add' ? 'Adding\u2026' : 'Add site'}
             </button>
+            {notice && <span className="muted small">{notice}</span>}
           </div>
         </div>
       ) : (

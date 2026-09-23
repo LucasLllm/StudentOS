@@ -176,33 +176,36 @@ export function addPortal({ name, url }) {
 }
 
 /**
- * Add a site and get it working, in one action.
+ * Add a site, with its sign-in if it has one of its own.
  *
- * Adding a site and signing into it were two steps, and the gap between them
- * was where it went wrong: a site could sit in the list looking added while
- * never having fetched anything. Now the sign-in is part of adding, and the
- * result says which of the three things happened -- signed in and synced,
- * signed in but nothing there, or the site refused the sign-in.
+ * Adding succeeds once the details are kept. Whether a sign-in works is not a
+ * question to answer here: a site behind Google has no form this can fill up
+ * front, and the agent signs in when it opens the site -- saved sign-in
+ * first, Google otherwise.
  */
-export async function addSiteWithSignIn({ name, url, username, password }) {
+export function addSite({ name, url, username, password }) {
   const portal = addPortal({ name, url });
+  if (!username || !password) return portal;
   try {
     saveCredentials(portal.id, { username, password });
   } catch (error) {
     removePortal(portal.id);
     throw error;
   }
+  return portal;
+}
 
-  const signedIn = await autoSignIn(portal.id);
-  if (!signedIn.ok) {
-    return { portal, signedIn: false, reason: signedIn.reason ?? 'the site refused that sign-in' };
-  }
-
+/**
+ * Try a new site's saved sign-in and read it once, if that works.
+ *
+ * Run after adding, in the background: a sign-in that does not take here is
+ * not a failure to report, only a site the agent will sign into later.
+ */
+export async function firstSignIn(portalId) {
+  const signedIn = await autoSignIn(portalId);
   // No second look needed: signing in recorded where the site put us, which
-  // is the site. Opening another browser to ask again would only be a chance
-  // to get a different answer.
-  const result = await syncPortal(portal.id);
-  return { portal, signedIn: true, synced: true, landed: signedIn.landed, result };
+  // is the site.
+  if (signedIn.ok) await syncPortal(portalId);
 }
 
 /**
