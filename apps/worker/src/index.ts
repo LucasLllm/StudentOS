@@ -13,7 +13,8 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDatabase } from '@contexto/db';
+import { inArray, eq } from 'drizzle-orm';
+import { agents, createDatabase, projects } from '@contexto/db';
 import { CredentialVault, EnvMasterKeyProvider, LlmRegistry, QuotaService } from '@contexto/llm';
 import {
   PostgresMemoryStore,
@@ -22,6 +23,7 @@ import {
   importConversation,
   collectExchanges,
   updateChatsDoc,
+  updateProjectMemory,
   writeUserDoc,
 } from '@contexto/agent';
 import { groupByStudent } from './grouping.js';
@@ -150,12 +152,31 @@ const jobs: Job[] = [
             });
           }
 
-          const exchanges = bursts.flatMap((burst) => burst.exchanges);
+          /*
+           * Project chats are written up into their project, not the student's
+           * pages. What was settled in a project belongs to it; carrying it into
+           * the page every ordinary chat reads would undo what keeping projects
+           * apart is for. They are taken out of every write below.
+           */
+          const inProject = await projectsOf(
+            ctx.db,
+            bursts.map((burst) => burst.agentId),
+          );
+          await writeProjectMemories(
+            ctx.db,
+            llm,
+            userId,
+            bursts.filter((burst) => inProject.has(burst.agentId)),
+            inProject,
+          );
+          const ordinary = bursts.filter((burst) => !inProject.has(burst.agentId));
+
+          const exchanges = ordinary.flatMap((burst) => burst.exchanges);
           if (exchanges.length === 0) continue;
 
           if (ctx.vaultRoot) {
             const vault = new Vault(ctx.vaultRoot, userId);
-            const knownBefore = bursts
+            const knownBefore = ordinary
               .map((burst) => burst.knownBefore)
               .filter((known): known is string => known !== undefined);
 
@@ -201,7 +222,7 @@ const jobs: Job[] = [
           if (ctx.vaultRoot) {
             const vault = new Vault(ctx.vaultRoot, userId);
             if (await vault.has()) {
-              for (const burst of bursts) {
+              for (const burst of ordinary) {
                 if (burst.exchanges.length === 0 || !burst.newestId) continue;
                 const written = await importConversation(
                   { llm },
@@ -232,6 +253,62 @@ const jobs: Job[] = [
     },
   },
 ];
+
+type Db = ReturnType<typeof buildContext>['db'];
+
+/** Which of these chats belong to a project, and to which. */
+async function projectsOf(db: Db, agentIds: string[]): Promise<Map<string, string>> {
+  if (agentIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: agents.id, projectId: agents.projectId })
+    .from(agents)
+    .where(inArray(agents.id, agentIds));
+  return new Map(rows.flatMap((row) => (row.projectId ? [[row.id, row.projectId] as const] : [])));
+}
+
+/**
+ * Fold what project chats settled into each project's memory.
+ *
+ * Once per project per pass, with every quiet chat of that project together,
+ * so two chats that went quiet in the same hour cost one call rather than two.
+ * Only between conversations: the memory is read into a chat's frozen block
+ * when it starts, and a chat already open keeps the one it was given.
+ */
+async function writeProjectMemories(
+  db: Db,
+  llm: Parameters<typeof updateProjectMemory>[0]['llm'],
+  userId: string,
+  bursts: { agentId: string; exchanges: string[] }[],
+  inProject: Map<string, string>,
+): Promise<void> {
+  const byProject = new Map<string, string[]>();
+  for (const burst of bursts) {
+    const projectId = inProject.get(burst.agentId);
+    if (!projectId || burst.exchanges.length === 0) continue;
+    byProject.set(projectId, [...(byProject.get(projectId) ?? []), ...burst.exchanges]);
+  }
+
+  for (const [projectId, exchanges] of byProject) {
+    const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!project || project.userId !== userId) continue;
+    const memory = await updateProjectMemory(
+      { llm },
+      {
+        name: project.name,
+        instructions: project.instructions,
+        memory: project.memory,
+        exchanges,
+        userId,
+      },
+    );
+    if (memory !== null) {
+      await db
+        .update(projects)
+        .set({ memory, memoryUpdatedAt: new Date() })
+        .where(eq(projects.id, projectId));
+    }
+  }
+}
 
 async function runJob(job: Job): Promise<void> {
   try {

@@ -156,6 +156,9 @@ importers:
       '@contexto/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(kysely@0.29.5)(postgres@3.4.9)
     devDependencies:
       tsx:
         specifier: ^4.23.12

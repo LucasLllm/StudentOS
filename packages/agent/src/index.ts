@@ -241,3 +241,4 @@ export {
 export { PROJECT_TOOLS, addToProject, openProjectItem, searchProject } from './tools/project.js';
 export type { ProjectAccess, ProjectItem, ProjectRef } from './tools/types.js';
 export { queryTerms, rankByTermMatches } from './memory/search.js';
+export { PROJECT_MEMORY_LIMIT, updateProjectMemory } from './projects/memory.js';

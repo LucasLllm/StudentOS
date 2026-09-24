@@ -11,7 +11,8 @@
   "dependencies": {
     "@contexto/agent": "workspace:*",
     "@contexto/db": "workspace:*",
-    "@contexto/llm": "workspace:*"
+    "@contexto/llm": "workspace:*",
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "tsx": "^4.23.12"
