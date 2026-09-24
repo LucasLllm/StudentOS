@@ -21,6 +21,7 @@ import type { GoogleTokenProvider, ToolContext, PortalSnapshotSource } from './t
 import type { AudioTranscriber } from './tools/transcribe.js';
 import type { YoutubeMetadataSource, YoutubeTranscriptSource } from './tools/web/youtube.js';
 import type { ToolRegistry } from './tools/registry.js';
+import type { ProjectAccess } from './tools/types.js';
 import type { Vault } from './vault/vault.js';
 
 /**
@@ -106,6 +107,16 @@ export interface AgentRunInput {
    */
   onActivity?: (activity: AgentActivity) => void;
   signal?: AbortSignal;
+  /**
+   * The project this chat belongs to, when it belongs to one.
+   *
+   * `block` is the project as this chat was first told it, frozen on its
+   * first turn and replayed byte for byte so the cached system prompt holds.
+   * `diff` is what has changed in the project's context since, told in the
+   * turn context where changing costs nothing. `access` is what the project_*
+   * tools read and add through; the caller registers them.
+   */
+  project?: { block: string; diff: string | null; access: ProjectAccess };
   /**
    * Overrides DEFAULT_CONTEXT_BUDGET. Production never sets this; the eval
    * harness does, forcing the thresholds down so a short scripted
@@ -229,13 +240,23 @@ export async function runAgentTurn(
     // between turns goes in the user message instead -- see buildTurnContext.
     {
       role: 'system',
-      content: buildSystemPrompt(input.purpose, availableSkills, input.about, Boolean(input.vault)),
+      content: buildSystemPrompt(
+        input.purpose,
+        availableSkills,
+        input.about,
+        Boolean(input.vault),
+        input.project?.block,
+      ),
     },
     ...renderTranscript(history),
     {
       role: 'user',
       content: buildUserMessage(
-        buildTurnContext(input.timezone, plan ? { plan, turnsSince } : undefined),
+        buildTurnContext(
+          input.timezone,
+          plan ? { plan, turnsSince } : undefined,
+          input.project?.diff ?? undefined,
+        ),
         renderUserItem(userItem),
       ),
     },
@@ -253,6 +274,7 @@ export async function runAgentTurn(
     ...(input.residentialFetch ? { residentialFetch: input.residentialFetch } : {}),
     ...(input.portals ? { portals: input.portals } : {}),
     ...(input.vault ? { vault: input.vault } : {}),
+    ...(input.project ? { project: input.project.access } : {}),
     ...(deps.plans ? { plans: deps.plans } : {}),
     // What plan_update stamps on whatever it saves. Without it every plan the
     // model writes looks written on turn zero, and is stale the moment it lands.
@@ -473,6 +495,22 @@ export async function runAgentTurn(
 }
 
 /**
+ * What a chat inside a project is told about being in one.
+ *
+ * The project block itself is data; this is the one instruction that goes
+ * with it. Adding is the agent's to decide, and the rule is the one a student
+ * would give: bring in what the project will need again, not what was glanced
+ * at, so the context stays something worth carrying on every turn.
+ */
+export const PROJECT_SECTION =
+  'This chat belongs to a project. Its goal, what earlier chats in it established and its ' +
+  'context are below: treat them as already known and build on them, without re-asking ' +
+  'what they answer. For anything else, search the vault, Drive and mail as usual. When you ' +
+  'use something from outside the project that the project will need again -- a brief, a ' +
+  "rubric, a teacher's instructions, a draft -- add it with project_add, without asking and " +
+  'without announcing it.';
+
+/**
  * What every agent is told about sites behind a login, before it has loaded
  * anything.
  *
@@ -504,6 +542,8 @@ export function buildSystemPrompt(
   /** The page the vault writes about them. See vault/user-doc.ts. */
   about?: string,
   hasVault = false,
+  /** The frozen project block, for a chat inside a project. See projects/block.ts. */
+  project?: string,
 ): string {
   /*
    * Tier 1 -- universal. Byte-identical for every agent on the platform.
@@ -585,6 +625,18 @@ export function buildSystemPrompt(
     perAgent.push(`What their vault says about them:\n${about.trim()}`);
   }
 
+  /*
+   * The project, for a chat inside one.
+   *
+   * Per-agent tier, like the purpose: frozen on the chat's first turn and
+   * byte-identical after, so it is served from cache on every turn but the
+   * first. After the page about the student, because a project is the more
+   * specific of the two and the later text is what the model leans on.
+   */
+  if (project && project.trim() !== '') {
+    perAgent.push(`${PROJECT_SECTION}\n\n${project.trim()}`);
+  }
+
   if (skills.length > 0) {
     perAgent.push(
       'Skills you have learned:\n' +
@@ -618,6 +670,8 @@ export function buildSystemPrompt(
 export function buildTurnContext(
   timezone: string | undefined,
   plan?: { plan: AgentPlan; turnsSince: number },
+  /** What changed in the project's context since this chat's block was frozen. */
+  projectChanges?: string,
 ): string {
   /*
    * Temporal grounding.
@@ -628,6 +682,14 @@ export function buildTurnContext(
    * are in, every time, which reads as the agent being broken.
    */
   const sections = [currentTimeSection(timezone)];
+
+  /*
+   * The project's context as it stands now, where it differs from the block
+   * the system prompt was frozen with. Here rather than there because this is
+   * rebuilt every turn anyway: an item added in another chat is known at once
+   * and nothing cached is lost for it. Above the plan, which stays last.
+   */
+  if (projectChanges) sections.push(projectChanges);
 
   /*
    * The plan, last, and rewritten every turn.

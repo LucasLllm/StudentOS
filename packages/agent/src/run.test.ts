@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
-import { buildSystemPrompt, currentTimeSection, runAgentTurn } from './run.js';
+import { PROJECT_SECTION, buildSystemPrompt, currentTimeSection, runAgentTurn } from './run.js';
 import { COMPACTION, RESPONDING, VAULT_READING, WORKING } from './prompts/documents.js';
 import { ToolRegistry } from './tools/registry.js';
 import { loadSkill } from './tools/skills.js';
@@ -1283,5 +1283,84 @@ describe('the plan in the turn context', () => {
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.plans).toBe(plans);
     expect(contexts[0]?.turnSeq).toBe(stored?.seq);
+  });
+});
+
+describe('a chat inside a project', () => {
+  type Seen = { role: string; content: string };
+
+  const block = 'Project: CAS proposal\n\nProject context:\nNothing has been added yet.';
+
+  function deps(plan: AgentPlan | null = null) {
+    const seen: Seen[] = [];
+    let context: ToolContext | undefined;
+    const tools = new ToolRegistry().register({
+      id: 'peek',
+      description: 'x',
+      inputSchema: z.object({}),
+      execute: async (_input: unknown, ctx: ToolContext) => {
+        context = ctx;
+        return 'ok';
+      },
+    });
+    let calls = 0;
+    const built = {
+      llm: {
+        async chat(request: unknown) {
+          seen.push(...(request as { messages: Seen[] }).messages);
+          calls += 1;
+          return {
+            content: calls === 1 ? '' : 'done',
+            toolCalls: calls === 1 ? [{ id: 'c1', name: 'peek', arguments: '{}' }] : [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            finishReason: 'stop' as const,
+          };
+        },
+      },
+      memory: { recall: async () => ({ summaries: [], recent: [] }), record: async () => ({}) },
+      skills: { list: async () => [] },
+      tools,
+      transcript: new InMemoryTranscriptStore(),
+      plans: { read: async () => plan, save: async () => {} },
+    } as unknown as AgentRunDeps;
+    return { built, seen, context: () => context };
+  }
+
+  const access = { projectId: 'p1', items: async () => [], add: async () => ({ error: 'no' }) };
+
+  it('carries the frozen block in the system prompt, and nothing when there is none', () => {
+    const plain = buildSystemPrompt('help', [], '# Lucas', true);
+    const inProject = buildSystemPrompt('help', [], '# Lucas', true, block);
+    expect(inProject).toContain(block);
+    expect(inProject).toContain('project_add');
+    expect(inProject.indexOf('# Lucas')).toBeLessThan(inProject.indexOf(block));
+    // An ordinary chat's prompt is exactly what it was before projects.
+    expect(plain).not.toContain(PROJECT_SECTION);
+    expect(plain).not.toContain('project_add');
+  });
+
+  it('tells what changed in the turn context, above the plan, and hands the tools the project', async () => {
+    const steps = [{ step: 'Draft', status: 'in_progress' as const }];
+    const { built, seen, context } = deps({ steps, updatedAtSeq: 1 });
+
+    await runAgentTurn(built, {
+      userId: 'u1',
+      agentId: 'a1',
+      purpose: '',
+      message: 'go',
+      timezone: 'Europe/London',
+      project: { block, diff: 'Added to the project context: rubric', access },
+    } as never);
+
+    const system = seen.find((m) => m.role === 'system')?.content ?? '';
+    expect(system).toContain(block);
+    expect(system).not.toContain('Added to the project context: rubric');
+
+    const user = seen.filter((m) => m.role === 'user').at(-1)?.content ?? '';
+    const turn = user.slice(user.indexOf('<turn_context>'), user.indexOf('</turn_context>'));
+    expect(turn).toContain('rubric');
+    expect(turn.indexOf('rubric')).toBeLessThan(turn.indexOf('Draft'));
+
+    expect(context()?.project).toBe(access);
   });
 });
