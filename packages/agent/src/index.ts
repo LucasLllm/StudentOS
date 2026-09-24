@@ -238,3 +238,5 @@ export {
   sourceKindFor,
   sourceKindForNote,
 } from './projects/vault.js';
+export { PROJECT_TOOLS, addToProject, openProjectItem, searchProject } from './tools/project.js';
+export type { ProjectAccess, ProjectItem, ProjectRef } from './tools/types.js';

@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { SourceKind } from '@contexto/shared';
 import type { MemoryStore } from '../memory/types.js';
 import type { PlanStore } from '../plan/types.js';
 import type { Vault } from '../vault/vault.js';
@@ -88,7 +89,41 @@ export interface ToolContext {
   plans?: PlanStore;
   /** The transcript seq of the current turn's user item, for plan_update's stamp. */
   turnSeq?: number;
+  /**
+   * The project this chat belongs to, for the project_* tools.
+   *
+   * Absent for an ordinary chat, which is also why those tools are only
+   * registered for a project chat -- they check anyway.
+   */
+  project?: ProjectAccess;
   signal?: AbortSignal;
+}
+
+/** One item of a project's context, read. */
+export interface ProjectItem {
+  id: string;
+  name: string;
+  kind: SourceKind;
+  summary: string;
+  body: string;
+  /** Written by someone other than the student, so carried as untrusted. */
+  untrusted: boolean;
+}
+
+/** Something to bring into a project: a note from the student's vault, a Drive file, an email. */
+export type ProjectRef = { note: string } | { driveFileId: string } | { gmailMessageId: string };
+
+/**
+ * A project, as its tools see it.
+ *
+ * An interface rather than the database, so the tools stay in this package
+ * and can be tested with a list in memory; apps/api implements it.
+ */
+export interface ProjectAccess {
+  projectId: string;
+  items(): Promise<ProjectItem[]>;
+  /** Idempotent: adding what is already there reports it as there. */
+  add(ref: ProjectRef): Promise<{ name: string; added: boolean } | { error: string }>;
 }
 
 /** One page of a portal, and the JSON its own front-end fetched to render it. */
