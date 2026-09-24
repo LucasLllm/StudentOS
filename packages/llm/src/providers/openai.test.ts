@@ -244,7 +244,7 @@ describe('the tools OpenAI receives', () => {
 describe('the reasoning OpenAI is asked for', () => {
   it('runs every turn at xhigh effort', async () => {
     create.mockResolvedValueOnce({ output: [], output_text: '', status: 'completed' });
-    const provider = new OpenAiProvider({ apiKey: 'k', model: 'gpt-5.6-luna' });
+    const provider = new OpenAiProvider({ apiKey: 'k', model: 'gpt-6-luna' });
 
     await provider.chat({ messages: [{ role: 'user', content: 'hi' }] }, { userId: 'u1' });
 
@@ -253,7 +253,7 @@ describe('the reasoning OpenAI is asked for', () => {
 });
 
 describe('what OpenAI is asked for', () => {
-  const provider = () => new OpenAiProvider({ apiKey: 'k', model: 'gpt-5.6-luna' });
+  const provider = () => new OpenAiProvider({ apiKey: 'k', model: 'gpt-6-luna' });
   const empty = { output: [], output_text: '', status: 'completed' };
 
   it('keeps reasoning across turns and asks for its summary', async () => {

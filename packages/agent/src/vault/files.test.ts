@@ -317,7 +317,7 @@ describe('reading the files in the vault', () => {
     const llm = {
       chat: vi.fn(async () => {
         call += 1;
-        if (call === 1) throw new Error('429 Rate limit reached for gpt-5.6-luna');
+        if (call === 1) throw new Error('429 Rate limit reached for gpt-6-luna');
         return {
           content: JSON.stringify({ what: 'A method.', kind: 'worksheet', inCourse: [] }),
           toolCalls: [],

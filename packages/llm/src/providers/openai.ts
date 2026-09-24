@@ -68,7 +68,7 @@ export class OpenAiProvider implements LlmProvider {
       {
         model: this.model,
         // context: all_turns renders the reasoning items replayed from earlier
-        // turns back into the model's context -- the gpt-5.6 default, stated so
+        // turns back into the model's context -- stated explicitly so
         // it cannot silently change. summary: auto is what the activity feed
         // can show. Both are no-ops unless the items are actually replayed.
         reasoning: { effort: request.effort ?? 'xhigh', context: 'all_turns', summary: 'auto' },

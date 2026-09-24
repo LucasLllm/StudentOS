@@ -163,7 +163,7 @@ otherwise, so no agent and no inference spend is reachable without proving accou
   paying the provider directly.
 
 The platform model is one constant: `PLATFORM_MODEL` in `packages/llm/src/config.ts`. It's currently
-GPT-5.6 Luna ($0.20 / $1.20 per million tokens, 1.05M context). Cached-prefix tokens are metered
+GPT-6 Luna ($0.10 / $0.50 per million tokens, 1.05M context). Cached-prefix tokens are metered
 separately because prompt caching, not model choice, is the main lever on what the free tier costs.
 
 ## Agent core

@@ -57,7 +57,7 @@ export class LlmRegistry {
     if (credential) {
       switch (credential.provider) {
         case 'openai':
-          return new OpenAiProvider({ apiKey: credential.apiKey, model: 'gpt-5.6-luna' });
+          return new OpenAiProvider({ apiKey: credential.apiKey, model: PLATFORM_MODEL });
         case 'anthropic':
           return new AnthropicProvider({ apiKey: credential.apiKey });
       }

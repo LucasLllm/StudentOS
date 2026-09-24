@@ -17,7 +17,7 @@ import { waitFor, worthRetrying } from './retry.js';
 describe('what a rate limit is worth waiting', () => {
   it('waits as long as the provider asked for, in seconds', () => {
     const error = new Error(
-      'Rate limit reached for gpt-5.6-luna on tokens per min (TPM): Limit 200000, ' +
+      'Rate limit reached for gpt-6-luna on tokens per min (TPM): Limit 200000, ' +
         'Used 199346, Requested 2664. Please try again in 28.878s.',
     );
     // A little over, never under: coming back a moment early is another 429

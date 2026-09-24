@@ -6,11 +6,11 @@ import { PLATFORM_PRICING } from './config.js';
 
 describe('platformCostMicroUsd', () => {
   it('matches hand-computed pricing', () => {
-    // 64 * 0.2 + 4 * 1.2 = 17.6 -> 18. These are the exact numbers observed on
-    // the first real call against gpt-5.6-luna, so this pins the metering to
+    // 64 * 0.1 + 4 * 0.5 = 8.4 -> 8. These are the exact token counts observed on
+    // the first real call against gpt-5.6-luna, priced at gpt-6-luna rates, so this pins the metering to
     // reality rather than to itself.
     expect(platformCostMicroUsd({ inputTokens: 64, outputTokens: 4, cachedInputTokens: 0 })).toBe(
-      18,
+      8,
     );
   });
 
@@ -21,8 +21,8 @@ describe('platformCostMicroUsd', () => {
       cachedInputTokens: 900,
     });
 
-    // 100 uncached * 0.2 + 900 cached * 0.02 + 100 out * 1.2 = 20 + 18 + 120
-    expect(cost).toBe(158);
+    // 100 uncached * 0.1 + 900 cached * 0.01 + 100 out * 0.5 = 10 + 9 + 50
+    expect(cost).toBe(69);
   });
 
   it('makes caching materially cheaper, which is the whole reason it is metered', () => {
@@ -70,10 +70,10 @@ describe('platformCostMicroUsd', () => {
 });
 
 describe('costEquivalentTokens', () => {
-  it('counts a cached token at a tenth and an output token at six', () => {
+  it('counts a cached token at a tenth and an output token at five', () => {
     const usage = { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 900 };
-    // 100 * 0.2 + 900 * 0.02 + 100 * 1.2 = 158 micro-USD = 790 full-price input tokens
-    expect(costEquivalentTokens(platformCostMicroUsd(usage))).toBe(790);
+    // 100 * 0.1 + 900 * 0.01 + 100 * 0.5 = 69 micro-USD = 690 full-price input tokens
+    expect(costEquivalentTokens(platformCostMicroUsd(usage))).toBe(690);
   });
 
   it('is the identity for uncached input', () => {
