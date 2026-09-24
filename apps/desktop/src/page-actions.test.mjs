@@ -5,6 +5,7 @@ import {
   ActionError,
   GOOGLE_BUTTON,
   KEYS,
+  SUBMIT_BUTTON,
   SNAPSHOT_SCRIPT,
   keyNamed,
   performAction,
@@ -115,10 +116,49 @@ describe('the "Sign in with Google" button', () => {
     expect(pressed).toHaveBeenCalledOnce();
   });
 
+  it("never presses something else of Google's, like connecting Drive", () => {
+    page(`<button>Connect with Google Drive</button><a href="#c">Open Google Classroom</a>`);
+    Element.prototype.getClientRects = () => [{}];
+    expect(press()).toEqual({ clicked: false });
+  });
+
+  it('presses a button that just says Google', () => {
+    page(`<button id="g"><img alt="Google"></button>`);
+    Element.prototype.getClientRects = () => [{}];
+    expect(press()).toEqual({ clicked: true });
+  });
+
   it('says so when there is none', () => {
     page(`<button>Sign in</button>`);
     Element.prototype.getClientRects = () => [{}];
     expect(press()).toEqual({ clicked: false });
+  });
+});
+
+describe("a sign-in step's own submit button", () => {
+  const mark = () => JSON.parse((0, eval)(SUBMIT_BUTTON));
+  const marked = () => document.querySelector('[data-contexto-ref="151"]');
+
+  it('marks Next, not the links beside it', () => {
+    page(`<input type="email"><button>Forgot email?</button><button>Create account</button>
+      <button id="n"><span>Next</span></button>`);
+    Element.prototype.getClientRects = () => [{}];
+    expect(mark()).toEqual({ submitButton: true });
+    expect(marked()?.id).toBe('n');
+  });
+
+  it("falls back to the form's submit button", () => {
+    page(`<form><input id="u" type="text"><input type="submit" id="s" value="Go"></form>`);
+    Element.prototype.getClientRects = () => [{}];
+    document.getElementById('u').focus();
+    expect(mark()).toEqual({ submitButton: true });
+    expect(marked()?.id).toBe('s');
+  });
+
+  it('says there is none, so Enter is used', () => {
+    page(`<input type="email"><button>Help</button>`);
+    Element.prototype.getClientRects = () => [{}];
+    expect(mark()).toEqual({ submitButton: false });
   });
 });
 
@@ -205,6 +245,21 @@ describe('acting on the page', () => {
     );
     // And reads the page after, so the agent can see what the click did.
     expect(after.elements[0].name).toBe('Go');
+  });
+
+  it('makes the page draw before pressing it', async () => {
+    // Measured: a page just moved to a new renderer drops every press until
+    // it has drawn, and a capture is what makes it draw.
+    const session = fakeSession(clickable({ landed: 'here' }));
+    const order = [];
+    session.webContents.capturePage = vi.fn(async () => order.push('capture'));
+    const send = session.cdp.send;
+    session.cdp.send = async (method, params) => {
+      if (params?.type === 'mousePressed') order.push('press');
+      return send(method, params);
+    };
+    await act(session, { action: 'click', ref: 3 });
+    expect(order).toEqual(['capture', 'press']);
   });
 
   it('counts a click that took the page somewhere else as landed', async () => {
@@ -383,13 +438,14 @@ describe('signing in', () => {
   const isFill = (script) => script.includes('no-sign-in-field');
   const isStepCheck = (script) => script.includes('second-factor');
   const isGoogleButton = (script) => script.includes('clicked');
+  const isSubmitFind = (script) => script.includes('submitButton');
 
   /**
    * A page that walks through the states it is given, one per fill, then rests
    * on 'none' (signed in). STEP_CHECK peeks the current state; the fill
    * consumes it. Each state carries the origin the page is on for that step.
    */
-  const signInFlow = (steps, { google } = {}) => {
+  const signInFlow = (steps, { google, nextButton, pressDropped, coveredFor = 0 } = {}) => {
     let queue = [...steps];
     // A step with `lag` keeps showing itself for that many looks after it is
     // filled, the way Google's password page does while it checks.
@@ -409,6 +465,18 @@ describe('signing in', () => {
         queue = [...google];
         google = null;
         return JSON.stringify({ clicked: true });
+      }
+      // The step's own Next button, when the page has one.
+      if (isSubmitFind(script)) return JSON.stringify({ submitButton: Boolean(nextButton) });
+      // Pressing it: on screen, and the press heard by the button.
+      if (script.includes('getBoundingClientRect'))
+        return JSON.stringify({ x: 30, y: 40, onScreen: true });
+      if (script.includes('__cxClick')) {
+        if (coveredFor > 0) {
+          coveredFor -= 1;
+          return JSON.stringify({ landed: 'elsewhere' });
+        }
+        return JSON.stringify({ landed: pressDropped ? null : 'here' });
       }
       if (isStepCheck(script)) return queue.length ? queue[0].state : 'none';
       if (script.includes('location.origin'))
@@ -460,6 +528,85 @@ describe('signing in', () => {
     expect(fillsEvaluated(session)).toHaveLength(3);
     expect(pressedEnter(session)).toBe(3);
     expect(after.title).toBe('X');
+  });
+
+  it("presses the step's own Next with the mouse, not Enter, when it has one", async () => {
+    // Measured on Google and Kognity: with the app's window behind another,
+    // Enter reached nothing and each email page sat for ten seconds, while a
+    // mouse press on Next went through at once.
+    const session = fakeSession(
+      signInFlow(
+        [
+          { state: 'username', origin: 'https://accounts.google.com' },
+          { state: 'password', origin: 'https://accounts.google.com' },
+        ],
+        { nextButton: true },
+      ),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    const presses = session.sent.filter(
+      (s) => s.method === 'Input.dispatchMouseEvent' && s.type === 'mousePressed',
+    );
+    expect(presses).toHaveLength(2);
+    expect(presses[0]).toMatchObject({ x: 30, y: 40 });
+    expect(pressedEnter(session)).toBe(0);
+  });
+
+  it('presses Next again when something was in front of it for a moment', async () => {
+    // Measured on Google's password page: the first press landed on whatever
+    // covers Next as the page arrives, and Enter then went nowhere.
+    const session = fakeSession(
+      signInFlow([{ state: 'password', origin: 'https://accounts.google.com' }], {
+        nextButton: true,
+        coveredFor: 1,
+      }),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    const presses = session.sent.filter((s) => s.type === 'mousePressed');
+    expect(presses).toHaveLength(2);
+    expect(pressedEnter(session)).toBe(0);
+  });
+
+  it('presses Enter, never a script click, when the press on Next is dropped', async () => {
+    // Measured on Google's email page: the press was dropped every time, and
+    // its Next ignores a script click, so only the keyboard moves it on.
+    const session = fakeSession(
+      signInFlow([{ state: 'username', origin: 'https://accounts.google.com' }], {
+        nextButton: true,
+        pressDropped: true,
+      }),
+    );
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(pressedEnter(session)).toBe(1);
+    const scripts = session.evaluate.mock.calls.map((c) => c[0]);
+    expect(scripts.some((s) => s.includes('el.click()'))).toBe(false);
+  });
+
+  it('hands back the page within the time the agent waits, however slow the steps', async () => {
+    // The agent waits 75 seconds for any action; past that it tells the
+    // student their computer is asleep. Six steps that each move on just
+    // before the wait for them runs out must not get there.
+    const slow = (i) => ({ state: 'username', origin: `https://step${i}.studyo.app`, lag: 19 });
+    const session = fakeSession(signInFlow([0, 1, 2, 3, 4, 5].map(slow)));
+    const started = Date.now();
+    await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(Date.now() - started).toBeLessThan(60_000);
   });
 
   it('waits for a slow step to move on rather than calling it refused', async () => {

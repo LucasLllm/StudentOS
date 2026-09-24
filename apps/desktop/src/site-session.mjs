@@ -94,6 +94,14 @@ export class SiteSession {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        /*
+         * The page keeps running at full speed when the window is behind
+         * another, which is most of the time an agent is working. Measured on
+         * Google's sign-in: throttled, the page reported itself hidden and
+         * its Next took well over ten seconds to move on, long after the
+         * sign-in had stopped waiting for it.
+         */
+        backgroundThrottling: false,
       },
     });
 

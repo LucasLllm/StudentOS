@@ -121,11 +121,14 @@ function addPortalPanel() {
     placeholder: 'https://portals.veracross.com/lcc/student',
     'aria-label': 'Site address',
   });
-  const username = el('input', { placeholder: 'Username', 'aria-label': 'Username' });
+  const username = el('input', {
+    placeholder: 'Username (optional)',
+    'aria-label': 'Username (optional)',
+  });
   const password = el('input', {
     type: 'password',
-    placeholder: 'Password',
-    'aria-label': 'Password',
+    placeholder: 'Password (optional)',
+    'aria-label': 'Password (optional)',
   });
 
   return el('div', { class: 'panel' }, [
@@ -135,23 +138,30 @@ function addPortalPanel() {
       text: 'The page you normally land on after signing in — not the sign-in page itself. Copy it from your browser.',
     }),
     el('div', { class: 'row' }, [name, url]),
+    el('p', {
+      class: 'muted small',
+      style: 'margin-top:.6rem',
+      text: 'Username and password are optional: only for a site with its own login. Leave them empty for a site you sign into with Google.',
+    }),
     el('div', { class: 'row', style: 'margin-top:.5rem' }, [username, password]),
     el('div', { class: 'row', style: 'margin-top:.6rem' }, [
       el('button', {
         class: 'primary',
-        text: 'Add and sign in',
+        text: 'Add site',
         onclick: () => {
           if (!name.value.trim() || !url.value.trim())
             return alert('A name and address are needed.');
-          if (!username.value.trim() || !password.value)
-            return alert('A username and password are needed.');
+          // Optional, but half a sign-in is neither one thing nor the other.
+          if (Boolean(username.value.trim()) !== Boolean(password.value))
+            return alert('Fill in both the username and password, or leave both empty.');
           void call(
             () =>
               window.contexto.addPortal({
                 name: name.value.trim(),
                 url: url.value.trim(),
-                username: username.value.trim(),
-                password: password.value,
+                ...(username.value.trim()
+                  ? { username: username.value.trim(), password: password.value }
+                  : {}),
               }),
             'add',
           );

@@ -299,8 +299,9 @@ export const actInBrowser: Tool<ActInput, unknown> = {
     '(read the page again without doing anything, for a page that was still changing), sign_in ' +
     '(when a page asks to be signed in: their computer fills the sign-in they saved for that ' +
     "site and submits it, or, with none saved or the site refusing it, presses the site's " +
-    'Sign in with Google; no ref or text needed -- call it again for each step, the Google ' +
-    'page of a sign-in included, until you are in). ref is the [number] from the last page ' +
+    'Sign in with Google; no ref or text needed -- one call works through every step, the ' +
+    'Google pages included; call it again only if the page it returns still asks to sign ' +
+    'in). ref is the [number] from the last page ' +
     'result. Each call does exactly one thing and returns the page as it stands afterwards; ' +
     'read that before the next step. A password box takes only their saved sign-in, typed by ' +
     'their computer -- you never see the password and never need to. Ask the student before ' +

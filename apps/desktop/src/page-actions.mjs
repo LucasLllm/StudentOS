@@ -340,12 +340,35 @@ function gone(ref) {
 
 let clicks = 0;
 
-async function click(session, ref) {
+/*
+ * Make the page draw before it is pressed.
+ *
+ * Measured on a parked view: after a page moves to a new renderer -- Kognity
+ * handing off to Google -- every press was dropped, for as long as anyone
+ * waited, until the view was captured once. A capture takes a couple of
+ * milliseconds and returns nothing useful here; what matters is that it
+ * makes the new page draw, and a page that has drawn takes presses.
+ */
+async function drawn(session) {
+  const wc = session.webContents;
+  if (!wc?.capturePage) return;
+  await Promise.race([wc.capturePage().catch(() => {}), sleep(1000)]);
+}
+
+/**
+ * Press an element, and say whether the press landed on it.
+ *
+ * With `fallback: false` a dropped press is reported rather than followed by a
+ * script click -- for a caller with a better second way, since some pages
+ * (Google's sign-in) ignore a script click altogether.
+ */
+async function click(session, ref, { fallback = true } = {}) {
   const token = `click-${++clicks}`;
   const at = await run(session, CLICK_PREP(ref, token));
   if (at.missing) throw gone(ref);
 
   if (at.onScreen) {
+    await drawn(session);
     const point = { x: at.x, y: at.y };
     const press = { ...point, button: 'left', clickCount: 1 };
     await session.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
@@ -358,9 +381,9 @@ async function click(session, ref) {
       heard = await run(session, CLICK_CHECK(token));
     } catch {
       // The page went somewhere while being asked. The click took it there.
-      return;
+      return true;
     }
-    if (heard.gone || heard.landed === 'here') return;
+    if (heard.gone || heard.landed === 'here') return true;
     if (heard.landed === 'elsewhere') {
       throw new ActionError(
         `[${ref}] is behind something else on the page, so the click did not reach it. Close ` +
@@ -369,9 +392,11 @@ async function click(session, ref) {
     }
   }
 
+  if (!fallback) return false;
   // Off the edge of a view that has no size yet, or a press the browser
   // dropped. The element is still there; its own click handler gets it.
   await run(session, CLICK_FALLBACK(ref));
+  return true;
 }
 
 export async function pressKey(cdp, name) {
@@ -444,15 +469,82 @@ export const GOOGLE_BUTTON = `(() => {
   const said = (el) =>
     [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title'),
       ...Array.from(el.querySelectorAll('img')).map((i) => i.alt)].join(' ');
-  const candidates = Array.from(
+  // A way in with Google, not anything else of Google's: "Connect Google
+  // Drive" or "Get it on Google Play" on a page is never pressed.
+  const signIn = (t) =>
+    /google/i.test(t) &&
+    !/\\b(drive|classroom|play|calendar|docs|sheets|slides|forms|maps|meet|photos|store|workspace)\\b/i.test(t) &&
+    /(sign|log)\\s*(in|on|up)|continue|(with|use|using|via)\\s+google|^\\s*google\\s*$/i.test(t);
+  const button = Array.from(
     document.querySelectorAll('a, button, [role=button], input[type=submit], input[type=button]'),
-  ).filter((el) => shown(el) && /google/i.test(said(el)));
-  const button =
-    candidates.find((el) => /(sign|log)\\s*in|continue|with/i.test(said(el))) || candidates[0];
+  ).find((el) => shown(el) && signIn(said(el)));
   if (!button) return JSON.stringify({ clicked: false });
   button.click();
   return JSON.stringify({ clicked: true });
 })()`;
+
+/** The number a sign-in step's submit button is marked with, beyond any the page gets. */
+const SUBMIT_REF = MAX_ELEMENTS + 1;
+
+/**
+ * Mark the sign-in step's own submit button -- Next, Continue, Sign in -- so
+ * it can be pressed like any numbered element.
+ *
+ * By its words first, so "Forgot email?" and "Create account" beside it are
+ * never it; then a form's submit button. Says whether there was one: without
+ * it, Enter is the way to submit the step.
+ */
+export const SUBMIT_BUTTON = `(() => {
+  const shown = (el) => {
+    if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden') return false;
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  };
+  const words = (el) => String(el.innerText || el.value || el.getAttribute('aria-label') || '')
+    .replace(/\\s+/g, ' ').trim();
+  const buttons = Array.from(
+    document.querySelectorAll('button, input[type=submit], [role=button]'),
+  ).filter(shown);
+  const field = document.activeElement;
+  const button =
+    buttons.find((el) => /^(next|continue|sign ?in|log ?in|submit|verify|suivant|continuer|se connecter|connexion)$/i.test(words(el))) ||
+    (field && field.form
+      ? buttons.find((el) => el.form === field.form && (el.type || '').toLowerCase() === 'submit')
+      : null);
+  for (const el of document.querySelectorAll('[${ATTR}="${SUBMIT_REF}"]')) el.removeAttribute('${ATTR}');
+  if (!button) return JSON.stringify({ submitButton: false });
+  button.setAttribute('${ATTR}', '${SUBMIT_REF}');
+  return JSON.stringify({ submitButton: true });
+})()`;
+
+/**
+ * Submit the step just filled: a press on its own button, or Enter.
+ *
+ * The press, as a person would, because Google's Next ignores a script's
+ * submit and a script click, and a key reaches it only when the window has
+ * the keyboard. Only a press that lands counts. Measured on Google: its Next
+ * can be a moment behind its field, and on the password page something sits
+ * over it for a moment as the page arrives -- so a missing, covered or
+ * dropped press is tried again a second later. Enter is the last resort, for
+ * a step with no button of its own, where a form submits on it.
+ */
+async function submitStep(session) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await sleep(1000);
+    const { submitButton } = await run(session, SUBMIT_BUTTON);
+    if (!submitButton) continue;
+    try {
+      if (await click(session, SUBMIT_REF, { fallback: false })) return;
+    } catch {
+      // Something in front of it, for now.
+    }
+  }
+  await pressKey(session.cdp, 'Enter');
+}
+
+/** How long one sign_in may take, inside the 75 seconds the agent waits for it. */
+const SIGN_IN_BUDGET_MS = 55_000;
 
 /**
  * Sign in with what this machine saved, across as many pages as it takes.
@@ -461,7 +553,7 @@ export const GOOGLE_BUTTON = `(() => {
  * site that signs in through Google hands off to a Google page that asks the
  * same, one field at a time. So this drives the whole run rather than one
  * field -- read what the page wants, fill it from the keychain for that page's
- * own site, press a real Enter, wait, and look again -- until it is in, or a
+ * own site, submit it, wait, and look again -- until it is in, or a
  * second factor only the student can answer stops it. The keychain is asked
  * per page, so it answers for the site's own pages and that site's Google
  * step and nowhere else; the answer goes into the page and never to the agent.
@@ -484,7 +576,13 @@ async function signInFromKeychain(session, credentialsFor) {
     await new Promise((r) => setTimeout(r, 800));
     return true;
   };
-  for (let step = 0; step < 6; step += 1) {
+  /*
+   * The agent waits 75 seconds for the answer and then tells the student their
+   * computer is asleep, so the page goes back well inside that: a run cut off
+   * here is picked up by the next sign_in, from wherever it got to.
+   */
+  const deadline = Date.now() + SIGN_IN_BUDGET_MS;
+  for (let step = 0; step < 6 && Date.now() < deadline; step += 1) {
     const state = await session.evaluate(STEP_CHECK);
     if (state === 'second-factor') return; // The student finishes this one step.
     if (state === 'none') {
@@ -518,11 +616,11 @@ async function signInFromKeychain(session, credentialsFor) {
     }
     seen.add(mark);
     await session.evaluate(signInScript(saved.username, saved.password));
-    // Submit by the keyboard, not the page: a real Enter is what Google's Next
-    // answers to, and an ordinary form submits on it too.
-    await pressKey(session.cdp, 'Enter');
+    // Submitted by a real press, not by the page: Google's Next ignores a
+    // script's submit.
+    await submitStep(session);
     await settle(wc, async () => {}, { quietMs: 1000 });
-    await movedOn(session, origin, state);
+    await movedOn(session, origin, state, deadline);
   }
 }
 
@@ -535,8 +633,8 @@ async function signInFromKeychain(session, credentialsFor) {
  * Google signed in a moment later behind it. A page that has not moved after
  * this long really did come back the same.
  */
-async function movedOn(session, origin, state) {
-  for (let waited = 0; waited < 10_000; waited += 500) {
+async function movedOn(session, origin, state, deadline) {
+  for (let waited = 0; waited < 10_000 && Date.now() < deadline; waited += 500) {
     await new Promise((r) => setTimeout(r, 500));
     try {
       if ((await session.evaluate(STEP_CHECK)) !== state) return;
