@@ -221,3 +221,20 @@ export {
   type AgentRunResult,
 } from './run.js';
 export { nameConversation, tidyTitle, TITLE_LIMIT } from './title.js';
+
+export {
+  INLINE_LIMIT_TOKENS,
+  estimateTextTokens,
+  projectDiff,
+  renderProjectBlock,
+  type BlockProject,
+  type BlockSource,
+} from './projects/block.js';
+export { SUMMARY_LIMIT, summariseSource } from './projects/summary.js';
+export {
+  isUntrusted,
+  projectVault,
+  removeProjectVault,
+  sourceKindFor,
+  sourceKindForNote,
+} from './projects/vault.js';
