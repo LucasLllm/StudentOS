@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq, sql } from 'drizzle-orm';
-import { agentMessages, agents, user } from '@contexto/db';
+import { agentMessages, agents, projects, user } from '@contexto/db';
 import type { Message, MessageAttachment } from '@contexto/shared';
 import { ContextoError } from '@contexto/shared';
 import {
+  PROJECT_TOOLS,
   Vault,
   bootstrapItems,
+  projectDiff,
+  projectVault,
+  renderProjectBlock,
   buildToolRegistry,
   nameConversation,
   listDocuments,
@@ -15,6 +19,7 @@ import {
 import type { AppContext } from './context.js';
 import { BetterAuthGoogleTokenProvider, getGoogleGrant } from './google/connections.js';
 import { DbPortalSnapshots } from './portal-snapshots.js';
+import { DbProjectAccess, blockSources, loadSources } from './projects/sources.js';
 import { beginTurn, endTurn, setActivity } from './turns-in-flight.js';
 
 /**
@@ -137,6 +142,19 @@ export async function runTurnForAgent(
       vaultFor(ctx.env?.VAULT_ROOT, userId),
     ]);
 
+    const project = agent.projectId ? await projectForTurn(ctx, userId, agent) : undefined;
+    const tools = buildToolRegistry(grant.scope, grant.disabled);
+    if (project) for (const tool of PROJECT_TOOLS) tools.register(tool);
+
+    /*
+     * A file attached in a project chat went into the project, not the
+     * student's vault, so that is where it is read from.
+     */
+    const attachmentVault =
+      agent.projectId && ctx.env?.VAULT_ROOT
+        ? projectVault(ctx.env.VAULT_ROOT, userId, agent.projectId)
+        : vault;
+
     /*
      * The title is written beside the reply, not after it.
      *
@@ -151,7 +169,7 @@ export async function runTurnForAgent(
           llm: ctx.llm,
           memory: ctx.memory,
           skills: ctx.skills,
-          tools: buildToolRegistry(grant.scope, grant.disabled),
+          tools,
           transcript: ctx.transcript,
           plans: ctx.plans,
         },
@@ -180,15 +198,16 @@ export async function runTurnForAgent(
            * photograph asked about all afternoon is read once and replayed
            * rather than re-read onto every question after it.
            */
-          ...(vault
+          ...(attachmentVault
             ? {
                 attachments: await readAttachments(
-                  vault,
+                  attachmentVault,
                   (attachments ?? []).map((a) => a.name),
                 ),
               }
             : {}),
           ...(profile?.timezone ? { timezone: profile.timezone } : {}),
+          ...(project ? { project } : {}),
           google: new BetterAuthGoogleTokenProvider(ctx.auth, userId, grant.groups, grant.scope),
           ...(ctx.transcriber ? { transcriber: ctx.transcriber } : {}),
           youtube: ctx.youtube,
@@ -220,6 +239,13 @@ export async function runTurnForAgent(
 
     // Surfaces the agent in the "recently used" ordering on the list screen.
     await ctx.db.update(agents).set({ updatedAt: new Date() }).where(eq(agents.id, agent.id));
+    // And its project, which is ordered the same way.
+    if (agent.projectId) {
+      await ctx.db
+        .update(projects)
+        .set({ updatedAt: new Date() })
+        .where(eq(projects.id, agent.projectId));
+    }
 
     if (!userMessage || !assistantMessage) {
       throw new ContextoError('internal_error', 'Failed to save messages.');
@@ -236,6 +262,45 @@ export async function runTurnForAgent(
     // for a conversation nothing is working on.
     endTurn(agent.id);
   }
+}
+
+/**
+ * What a project chat's turn is told about its project.
+ *
+ * The block is rendered once, on the chat's first turn, and stored on the chat;
+ * every later turn replays it exactly, so the system prompt it sits in stays
+ * cached for the life of the conversation. What has changed in the project's
+ * context since is worked out fresh each turn and told beside the message.
+ */
+async function projectForTurn(
+  ctx: AppContext,
+  userId: string,
+  agent: typeof agents.$inferSelect,
+): Promise<{ block: string; diff: string | null; access: DbProjectAccess } | undefined> {
+  if (!agent.projectId) return undefined;
+  const [project] = await ctx.db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, agent.projectId))
+    .limit(1);
+  if (!project || project.userId !== userId) return undefined;
+
+  // A deployment without vaults still has the goal and the memory to carry.
+  const sources = ctx.env?.VAULT_ROOT
+    ? blockSources(await loadSources(ctx, userId, project.id))
+    : [];
+
+  let block = agent.projectContext;
+  if (block === null) {
+    block = renderProjectBlock(project, sources);
+    await ctx.db.update(agents).set({ projectContext: block }).where(eq(agents.id, agent.id));
+  }
+
+  return {
+    block,
+    diff: projectDiff(block, sources),
+    access: new DbProjectAccess(ctx, ctx.llm, userId, project.id),
+  };
 }
 
 export function toMessage(row: typeof agentMessages.$inferSelect): Message {

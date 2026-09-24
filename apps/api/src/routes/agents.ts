@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import { agentMemories, agentMessages, agents } from '@contexto/db';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { agentMemories, agentMessages, agents, projects } from '@contexto/db';
 import {
   createAgentSchema,
   sendMessageSchema,
@@ -51,11 +51,15 @@ export function createAgentRoutes(ctx: AppContext) {
          *
          * Archived rows come back too. The rail hides them and settings lists
          * them, and one query answering both beats a flag on the request.
+         *
+         * Chats inside a project do not. They are listed on the project's
+         * page, and a rail carrying them too would be every project's chats
+         * mixed back into the list projects exist to take them out of.
          */
         const rows = await ctx.db
           .select()
           .from(agents)
-          .where(eq(agents.userId, c.get('userId')))
+          .where(and(eq(agents.userId, c.get('userId')), isNull(agents.projectId)))
           .orderBy(sql`${agents.pinnedAt} desc nulls last`, desc(agents.updatedAt));
 
         return c.json({ agents: rows.map(toAgent) });
@@ -66,6 +70,23 @@ export function createAgentRoutes(ctx: AppContext) {
       // change is a compile error in the web app rather than a runtime 400.
       .post('/', auth, zValidator('json', createAgentSchema), async (c) => {
         const body = c.req.valid('json');
+        /*
+         * Only into a project of the caller's own. Without this a chat could be
+         * started in somebody else's project and read its context on its first
+         * turn -- the one hole a projectId from the request opens.
+         */
+        if (body.projectId) {
+          const [project] = await ctx.db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(and(eq(projects.id, body.projectId), eq(projects.userId, c.get('userId'))))
+            .limit(1);
+          if (!project) throw new ContextoError('not_found', 'Project not found.');
+          await ctx.db
+            .update(projects)
+            .set({ updatedAt: new Date() })
+            .where(eq(projects.id, project.id));
+        }
         const [row] = await ctx.db
           .insert(agents)
           .values({ userId: c.get('userId'), ...body })
@@ -251,7 +272,12 @@ export function createAgentRoutes(ctx: AppContext) {
         const userId = c.get('userId');
         const agent = await ownedAgent(userId, c.req.param('id'));
 
-        const vault = vaultFor(ctx.env?.VAULT_ROOT, userId);
+        /*
+         * A project chat never taught the student's own pages anything -- its
+         * exchanges went to the project's memory -- so there is nothing there
+         * to take back out.
+         */
+        const vault = agent.projectId ? undefined : vaultFor(ctx.env?.VAULT_ROOT, userId);
         const memories = vault
           ? await ctx.db
               .select({ id: agentMemories.id, content: agentMemories.content })
