@@ -21,6 +21,7 @@ import type { MessageAttachment } from '@contexto/shared';
 export function MessageFiles({
   attachments,
   local,
+  projectId,
 }: {
   /*
    * Optional, and read defensively. A message stored before this column
@@ -29,6 +30,8 @@ export function MessageFiles({
    */
   attachments?: MessageAttachment[];
   local?: Record<string, string>;
+  /** A project chat's pictures were kept in the project, and are served from there. */
+  projectId?: string;
 }) {
   if (!attachments?.length) return null;
 
@@ -41,7 +44,9 @@ export function MessageFiles({
             className="message-image"
             src={
               local?.[file.filename] ??
-              `${API_BASE_URL}/api/uploads/${encodeURIComponent(file.name)}`
+              (projectId
+                ? `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(file.name)}`
+                : `${API_BASE_URL}/api/uploads/${encodeURIComponent(file.name)}`)
             }
             alt={file.filename}
             loading="lazy"

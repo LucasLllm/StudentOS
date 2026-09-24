@@ -7,6 +7,9 @@ interface Props {
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /** What is being deleted, when it is not a chat. */
+  heading?: string;
+  detail?: string;
 }
 
 /**
@@ -22,7 +25,7 @@ interface Props {
  * `position: fixed` inside it -- so on a phone this dialog would be positioned
  * against the drawer and clipped to it rather than covering the screen.
  */
-export function ConfirmDelete({ title, busy, onCancel, onConfirm }: Props) {
+export function ConfirmDelete({ title, busy, onCancel, onConfirm, heading, detail }: Props) {
   const cancel = useRef<HTMLButtonElement>(null);
 
   /*
@@ -74,9 +77,9 @@ export function ConfirmDelete({ title, busy, onCancel, onConfirm }: Props) {
         aria-labelledby="confirm-delete-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <h2 id="confirm-delete-title">Are you sure you want to delete this chat?</h2>
+        <h2 id="confirm-delete-title">{heading ?? 'Are you sure you want to delete this chat?'}</h2>
         <p className="muted">
-          <strong>{title}</strong> will be permanently deleted from your vault.
+          <strong>{title}</strong> {detail ?? 'will be permanently deleted from your vault.'}
         </p>
 
         <div className="dialog-actions">

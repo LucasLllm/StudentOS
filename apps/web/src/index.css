@@ -3584,3 +3584,484 @@ body.dialog-open .app {
     width: 6.5rem;
   }
 }
+
+/* ---------- a project ---------- */
+
+.project-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0 0.9rem -0.5rem;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+/* In a chat it sits above the conversation, clear of the rail's toggle. */
+.chat-project {
+  align-self: flex-start;
+  margin: 0.25rem 0 0.5rem -0.5rem;
+}
+
+.project-head {
+  margin-bottom: 1.35rem;
+}
+
+.project-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.project-title h1 {
+  overflow-wrap: anywhere;
+}
+
+.project-title-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-top: 0.05rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.project-menu {
+  position: relative;
+  flex: none;
+}
+
+.project-more {
+  border-radius: 999px;
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.project-composer {
+  margin-bottom: 1.75rem;
+}
+
+/* The glow belongs to the empty new-chat screen; on a page with content under it, it is noise. */
+.project-composer .composer-glow::before {
+  display: none;
+}
+
+.project-composer .newchat-input {
+  min-height: 1.6rem;
+}
+
+.project-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.9rem;
+}
+
+.project-tabs button {
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  padding: 0.4rem 0.95rem;
+  color: var(--ink-faint);
+  font-size: 0.92rem;
+}
+
+.project-tabs button:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.project-tabs button.is-current {
+  background: var(--accent-wash-strong);
+  color: var(--ink);
+}
+
+.project-none {
+  padding: 1rem 0;
+  max-width: 34rem;
+}
+
+.project-chats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-chats li + li {
+  border-top: 1px solid var(--line);
+}
+
+.project-chats button {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  width: 100%;
+  padding: 0.8rem 0.35rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  font-weight: 400;
+}
+
+.project-chats button:hover:not(:disabled) {
+  background: var(--wash);
+}
+
+.project-chat-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-chat-name {
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.project-chat-preview,
+.project-chat-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-chat-preview {
+  color: var(--ink-faint);
+  font-size: 0.88rem;
+}
+
+.project-chat-when {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+}
+
+/* ---------- a project's context ---------- */
+
+.context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.context-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-style: dashed;
+  border-radius: 999px;
+  padding: 0.42rem 1rem 0.42rem 0.8rem;
+  color: var(--ink-soft);
+}
+
+.context-controls {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.context-controls select {
+  width: auto;
+  padding: 0.35rem 0.6rem;
+  border-color: transparent;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.context-controls select:hover {
+  background: var(--wash);
+}
+
+.context-gathering {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--accent-wash);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.context-gathering-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--violet-ink);
+  animation: gathering 1.4s ease-in-out infinite;
+}
+
+@keyframes gathering {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/*
+ * The grid of miniature pages.
+ *
+ * The one place in the project screens that is allowed to be a picture: each
+ * item drawn as a sheet with its own opening lines on it, in the serif the
+ * agent writes in, set small enough to read as texture and large enough to
+ * recognise. Portrait, like the documents they stand for.
+ */
+.context-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr));
+  gap: 1.25rem 1rem;
+}
+
+.context-card {
+  position: relative;
+  min-width: 0;
+}
+
+.context-open {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-weight: 400;
+}
+
+.context-open:hover:not(:disabled) {
+  background: none;
+}
+
+.context-page {
+  position: relative;
+  display: block;
+  aspect-ratio: 3 / 4;
+  margin-bottom: 0.45rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px 14px 6px 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+/* The folded corner. */
+.context-page::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 16px;
+  height: 16px;
+  border-bottom-left-radius: 5px;
+  background: linear-gradient(225deg, var(--page) 50%, var(--wash) 50%);
+  box-shadow: -1px 1px 0 var(--line);
+}
+
+.context-open:hover .context-page {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.context-page-text {
+  display: block;
+  height: 100%;
+  padding: 0.85rem 0.8rem;
+  font-family: var(--serif);
+  font-size: 0.56rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+
+.context-page.is-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.context-page.is-image::after {
+  display: none;
+}
+
+.context-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-meta {
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+}
+
+.context-remove {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.45rem;
+  display: none;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  color: var(--ink-soft);
+}
+
+.context-card:hover .context-remove,
+.context-card:focus-within .context-remove {
+  display: grid;
+}
+
+.context-remove:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--surface);
+}
+
+/* No hover on a phone, so Remove is simply there. */
+@media (hover: none) {
+  .context-remove {
+    display: grid;
+  }
+}
+
+.context-viewer {
+  max-width: 44rem;
+  max-height: calc(100vh - 3rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.context-viewer-summary {
+  margin: -0.4rem 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.context-viewer-image {
+  max-width: 100%;
+  max-height: 40vh;
+  object-fit: contain;
+  margin-bottom: 0.9rem;
+  border-radius: var(--radius);
+}
+
+.context-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  line-height: 1.65;
+  padding-right: 0.25rem;
+}
+
+.add-context {
+  max-width: 32rem;
+}
+
+.add-context-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 11rem;
+  margin-bottom: 0.9rem;
+  padding: 1.25rem;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  color: var(--ink-soft);
+  text-align: center;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.add-context-drop .muted {
+  font-size: 0.82rem;
+}
+
+.add-context-drop.is-over {
+  border-color: var(--violet-ink);
+  background: var(--accent-wash);
+}
+
+.add-context-ways {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.6rem;
+}
+
+.add-context-ways button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.95rem 0.5rem;
+  border-color: transparent;
+  background: var(--wash);
+  border-radius: var(--radius-lg);
+  font-size: 0.88rem;
+}
+
+.add-context-ways button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.add-context-text {
+  min-height: 12rem;
+  resize: vertical;
+}
+
+.add-context-problems {
+  margin: 0.9rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--danger);
+  font-size: 0.86rem;
+}
+
+@media (max-width: 760px) {
+  .context-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .projects-head h1,
+  .project-title h1 {
+    font-size: 1.6rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-page,
+  .context-gathering-dot {
+    transition: none;
+    animation: none;
+  }
+}

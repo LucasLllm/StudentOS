@@ -21,7 +21,11 @@ export interface Uploaded {
   image: boolean;
 }
 
-export async function uploadFile(file: File, context = ''): Promise<Uploaded> {
+/**
+ * @param projectId In a project chat the file goes into the project, which
+ *   keeps it out of the student's vault and puts it in the project's context.
+ */
+export async function uploadFile(file: File, context = '', projectId?: string): Promise<Uploaded> {
   const body = new FormData();
   body.append('file', file);
   /*
@@ -34,7 +38,10 @@ export async function uploadFile(file: File, context = ''): Promise<Uploaded> {
    */
   if (context.trim() !== '') body.append('context', context.trim());
 
-  const res = await fetch(`${API_BASE_URL}/api/uploads`, {
+  const path = projectId
+    ? `/api/projects/${encodeURIComponent(projectId)}/sources/upload`
+    : '/api/uploads';
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
     credentials: 'include',
     body,
@@ -56,4 +63,9 @@ export async function uploadFile(file: File, context = ''): Promise<Uploaded> {
   }
 
   return (await res.json()) as Uploaded;
+}
+
+/** A file straight into a project's context, from its Add context window. */
+export function uploadToProject(projectId: string, file: File): Promise<Uploaded> {
+  return uploadFile(file, '', projectId);
 }

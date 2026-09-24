@@ -8,6 +8,7 @@ import { applyAppearance, useResolvedTheme, type Appearance } from './lib/theme.
 import { Chat } from './screens/Chat.js';
 import { NewChat } from './screens/NewChat.js';
 import { Projects } from './screens/Projects.js';
+import { ProjectPage } from './screens/ProjectPage.js';
 import { Sidebar } from './screens/Sidebar.js';
 import { LinkDevice } from './screens/LinkDevice.js';
 import { Settings } from './screens/Settings.js';
@@ -193,6 +194,11 @@ export function App() {
         )}
 
         {route.name === 'projects' && <Projects />}
+
+        {/* Keyed for the reason Chat is: a different project is a new page, not a repaint. */}
+        {route.name === 'project' && (
+          <ProjectPage key={route.projectId} projectId={route.projectId} />
+        )}
 
         {route.name === 'link' && <LinkDevice requestId={route.requestId} />}
 

@@ -3,6 +3,8 @@ import { AgentSession } from './AgentSession.js';
 import { useAgentSession } from '../lib/useAgentSession.js';
 import type { Agent, AgentActivity, Message } from '@contexto/shared';
 import { api } from '../lib/api.js';
+import { BackIcon } from './FolderIcon.js';
+import { navigate } from '../lib/router.js';
 import { sameConversation } from '../lib/conversation.js';
 import { takeHandoff } from '../lib/handoff.js';
 import type { PreviewTarget } from '../lib/preview.js';
@@ -78,6 +80,12 @@ export function Chat({ agentId }: Props) {
    */
   const [atBottom, setAtBottom] = useState(true);
   const bottom = useRef<HTMLDivElement>(null);
+  /*
+   * The chat as last loaded, for code that runs before a render has caught up.
+   * The first message is delivered in the same tick the chat is loaded, and a
+   * file sent with it has to know already whether it goes into a project.
+   */
+  const agentRef = useRef<Agent | null>(null);
 
   useEffect(() => {
     setAgent(null);
@@ -92,7 +100,9 @@ export function Chat({ agentId }: Props) {
         setMissing(true);
         return;
       }
-      setAgent((await detail.json()).agent);
+      const loaded = (await detail.json()).agent;
+      agentRef.current = loaded;
+      setAgent(loaded);
 
       const history = await api.agents[':id'].messages.$get({ param: { id: agentId } });
       if (history.ok) {
@@ -333,7 +343,10 @@ export function Chat({ agentId }: Props) {
        * The model learns what came with the message from the turn context,
        * where the files are carried by name with their contents.
        */
-      const files = waiting.length > 0 ? await attachments.upload(waiting, said) : [];
+      const files =
+        waiting.length > 0
+          ? await attachments.upload(waiting, said, agentRef.current?.projectId ?? undefined)
+          : [];
       const content = said;
       const res = await api.agents[':id'].messages.$post({
         param: { id: agentId },
@@ -388,6 +401,12 @@ export function Chat({ agentId }: Props) {
       */}
       <div className="workspace">
         <div className="chat-column">
+          {/*
+            The one header a chat has, and only inside a project: the rail
+            does not list project chats, so this is the way back to the rest
+            of the work it belongs to.
+          */}
+          {agent?.projectId && <ProjectCrumb projectId={agent.projectId} />}
           <div className="messages">
             {messages.length === 0 && <p className="muted">Say something to get started.</p>}
 
@@ -411,7 +430,11 @@ export function Chat({ agentId }: Props) {
                   </>
                 ) : (
                   <>
-                    <MessageFiles attachments={message.attachments} local={localPreviews} />
+                    <MessageFiles
+                      attachments={message.attachments}
+                      local={localPreviews}
+                      projectId={agent?.projectId ?? undefined}
+                    />
                     {message.content && <span className="message-said">{message.content}</span>}
                   </>
                 )}
@@ -525,6 +548,27 @@ export function Chat({ agentId }: Props) {
         {preview && <FilePreview target={preview} onClose={() => setPreview(null)} />}
       </div>
     </>
+  );
+}
+
+/** "← CAS proposal", back to the project a chat belongs to. */
+function ProjectCrumb({ projectId }: { projectId: string }) {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      const res = await api.projects[':id'].$get({ param: { id: projectId } });
+      if (res.ok) setName((await res.json()).project.name);
+    })();
+  }, [projectId]);
+
+  return (
+    <button
+      className="quiet project-back chat-project"
+      onClick={() => navigate({ name: 'project', projectId })}
+    >
+      <BackIcon />
+      <span>{name ?? 'Project'}</span>
+    </button>
   );
 }
 

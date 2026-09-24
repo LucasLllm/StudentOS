@@ -88,11 +88,14 @@ export function useAttachments() {
    * around a missing attachment is worse than being told the attachment
    * failed.
    */
-  const upload = useCallback(async (all: Attachment[], context: string): Promise<Uploaded[]> => {
-    const done: Uploaded[] = [];
-    for (const item of all) done.push(await uploadFile(item.file, context));
-    return done;
-  }, []);
+  const upload = useCallback(
+    async (all: Attachment[], context: string, projectId?: string): Promise<Uploaded[]> => {
+      const done: Uploaded[] = [];
+      for (const item of all) done.push(await uploadFile(item.file, context, projectId));
+      return done;
+    },
+    [],
+  );
 
   return { items, add, adopt, remove, clear, upload };
 }

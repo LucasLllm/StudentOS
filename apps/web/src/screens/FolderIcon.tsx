@@ -17,3 +17,19 @@ export function FolderIcon({ size = 16 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Back to where a project page or a project chat came from. */
+export function BackIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+      <path
+        d="M9.75 3.75 5.5 8l4.25 4.25"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
