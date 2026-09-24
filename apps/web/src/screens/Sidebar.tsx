@@ -8,6 +8,7 @@ import { signOut } from '../lib/auth.js';
 import { initialOf } from '../lib/initial.js';
 import { onChatsChanged } from '../lib/chats.js';
 import { ConfirmDelete } from './ConfirmDelete.js';
+import { FolderIcon } from './FolderIcon.js';
 import { LogoMark } from './LogoMark.js';
 
 interface Props {
@@ -123,6 +124,20 @@ export function Sidebar({ route, name, email, onOpenSettings }: Props) {
       >
         <PlusIcon />
         <span>New</span>
+      </button>
+
+      {/*
+        Under New, as a place rather than an action: the chats that belong to
+        a piece of work live there, and are not in the list below.
+      */}
+      <button
+        className={`sidebar-place${
+          route.name === 'projects' || route.name === 'project' ? ' is-current' : ''
+        }`}
+        onClick={() => go({ name: 'projects' })}
+      >
+        <FolderIcon />
+        <span>Projects</span>
       </button>
 
       <nav className="sidebar-chats" aria-label="Chats">

@@ -7,6 +7,7 @@ import { signInWithGoogle, useSession } from './lib/auth.js';
 import { applyAppearance, useResolvedTheme, type Appearance } from './lib/theme.js';
 import { Chat } from './screens/Chat.js';
 import { NewChat } from './screens/NewChat.js';
+import { Projects } from './screens/Projects.js';
 import { Sidebar } from './screens/Sidebar.js';
 import { LinkDevice } from './screens/LinkDevice.js';
 import { Settings } from './screens/Settings.js';
@@ -190,6 +191,8 @@ export function App() {
            */
           <Chat key={route.agentId} agentId={route.agentId} />
         )}
+
+        {route.name === 'projects' && <Projects />}
 
         {route.name === 'link' && <LinkDevice requestId={route.requestId} />}
 

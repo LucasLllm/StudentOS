@@ -105,6 +105,25 @@ describe('the rail', () => {
     expect(text('.sidebar-new')).toEqual(['New']);
   });
 
+  it('has a way to the projects, under New', async () => {
+    await show('Lucas');
+    expect(text('.sidebar-place')).toEqual(['Projects']);
+    const order = [...container.querySelectorAll('.sidebar-new, .sidebar-place')].map(
+      (el) => el.textContent,
+    );
+    expect(order).toEqual(['New', 'Projects']);
+  });
+
+  it('marks Projects while you are in one', async () => {
+    await act(async () => {
+      root.render(
+        <Sidebar route={{ name: 'project', projectId: 'p1' }} onOpenSettings={() => {}} />,
+      );
+    });
+    await settle();
+    expect(text('.sidebar-place.is-current')).toEqual(['Projects']);
+  });
+
   it('marks the screen you are on', async () => {
     await act(async () => {
       root.render(

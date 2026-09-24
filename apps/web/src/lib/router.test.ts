@@ -31,6 +31,8 @@ describe('parseRoute', () => {
       { name: 'new' } as const,
       { name: 'settings' } as const,
       { name: 'chat', agentId: 'abc123' } as const,
+      { name: 'projects' } as const,
+      { name: 'project', projectId: 'p-1' } as const,
     ]) {
       expect(parseRoute(routeToPath(route))).toEqual(route);
     }
@@ -65,5 +67,13 @@ describe('the address a chat used to have', () => {
 
   it('is never handed back out', () => {
     expect(routeToPath({ name: 'chat', agentId: 'abc123' })).toBe('/chats/abc123');
+  });
+});
+
+describe('projects', () => {
+  it('has a list and a page per project', () => {
+    expect(parseRoute('/projects')).toEqual({ name: 'projects' });
+    expect(parseRoute('/projects/abc')).toEqual({ name: 'project', projectId: 'abc' });
+    expect(parseRoute('/projects/abc/extra')).toEqual({ name: 'notFound' });
   });
 });

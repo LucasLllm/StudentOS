@@ -17,6 +17,8 @@ import { useEffect, useState } from 'react';
 export type Route =
   | { name: 'new' }
   | { name: 'chat'; agentId: string }
+  | { name: 'projects' }
+  | { name: 'project'; projectId: string }
   | { name: 'settings' }
   | { name: 'link'; requestId: string }
   | { name: 'notFound' };
@@ -26,6 +28,13 @@ export function parseRoute(pathname: string): Route {
 
   if (segments.length === 0) return { name: 'new' };
   if (segments[0] === 'settings' && segments.length === 1) return { name: 'settings' };
+
+  if (segments[0] === 'projects') {
+    if (segments.length === 1) return { name: 'projects' };
+    if (segments.length === 2 && segments[1]) {
+      return { name: 'project', projectId: safeDecode(segments[1]) };
+    }
+  }
 
   // Opened by the desktop app in the student's browser, so this arrives from
   // outside the SPA and must survive a cold load.
@@ -73,6 +82,10 @@ export function routeToPath(route: Route): string {
       return '/';
     case 'chat':
       return `/chats/${encodeURIComponent(route.agentId)}`;
+    case 'projects':
+      return '/projects';
+    case 'project':
+      return `/projects/${encodeURIComponent(route.projectId)}`;
     case 'settings':
       return '/settings';
     case 'link':

@@ -2094,7 +2094,8 @@ a.button {
   margin-bottom: 3px;
 }
 
-.sidebar-new {
+.sidebar-new,
+.sidebar-place {
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -2123,11 +2124,13 @@ a.button {
 }
 
 .sidebar-new:hover,
+.sidebar-place:hover,
 .sidebar-chat:hover {
   background: var(--accent-wash);
 }
 
 .sidebar-new.is-current,
+.sidebar-place.is-current,
 .sidebar-chat.is-current {
   background: var(--accent-wash-strong);
 }
@@ -2136,7 +2139,8 @@ a.button {
   background: var(--accent-wash);
 }
 
-.sidebar-new svg {
+.sidebar-new svg,
+.sidebar-place svg {
   flex: none;
   color: var(--ink-soft);
 }
@@ -3381,4 +3385,202 @@ body.dialog-open .app {
  */
 .vault-inside {
   z-index: 200;
+}
+
+/* ---------- projects ---------- */
+
+/*
+ * The projects list and a project's page share one measure and one heading:
+ * the greeting's serif, at a size between it and the settings titles. A
+ * project is a place a student returns to, and its name is the one thing on
+ * the page worth setting like a title.
+ */
+.projects,
+.project {
+  padding-top: 2.25rem;
+}
+
+.projects-head,
+.project-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+.projects-head h1,
+.project-title h1 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.projects-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.projects-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--ink-faint);
+}
+
+.projects-search svg {
+  position: absolute;
+  left: 0.75rem;
+  pointer-events: none;
+}
+
+.projects-search input {
+  width: 15rem;
+  margin: 0;
+  padding: 0.5rem 0.9rem 0.5rem 2.15rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+
+.projects-tools .primary,
+.project-empty .primary,
+.projects-empty .primary {
+  border-radius: 999px;
+  padding: 0.45rem 1.05rem;
+}
+
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.projects-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+  padding: 0 0 0.6rem;
+}
+
+.projects-table td {
+  border-top: 1px solid var(--line);
+  padding: 0;
+}
+
+.projects-modified {
+  width: 9rem;
+  text-align: left;
+  font-size: 0.88rem;
+}
+
+.projects-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.7rem 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  font-weight: 400;
+}
+
+.projects-row:hover:not(:disabled) {
+  background: none;
+}
+
+.projects-row:hover .projects-name {
+  color: var(--violet-ink);
+}
+
+.projects-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.projects-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-empty {
+  padding: 2.5rem 0;
+  border-top: 1px solid var(--line);
+  max-width: 32rem;
+}
+
+.projects-empty p {
+  color: var(--ink-soft);
+  margin-bottom: 1rem;
+}
+
+.project-dialog {
+  max-width: 31rem;
+}
+
+.project-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+
+.project-dialog-head h2 {
+  margin: 0;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
+
+.project-dialog textarea {
+  resize: vertical;
+  min-height: 6rem;
+}
+
+.project-dialog-note {
+  font-size: 0.85rem;
+  margin: -0.2rem 0 1rem;
+}
+
+.project-dialog-error {
+  color: var(--danger);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 760px) {
+  .projects-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .projects-search {
+    flex: 1;
+  }
+
+  .projects-search input {
+    width: 100%;
+  }
+
+  .projects-modified {
+    width: 6.5rem;
+  }
 }
