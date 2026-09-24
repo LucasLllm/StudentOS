@@ -16,7 +16,7 @@ ChatGPT and Claude both answer this with Projects: a folder of chats that share 
 
 1. **A project is a row, and a project chat is an ordinary chat with a `projectId`.** Everything a chat already does (transcript, compaction, plan, tools, attachments) works unchanged inside a project. Project chats are left out of the sidebar's chat list and listed on the project page instead.
 2. **The goal is the instructions.** "What's the goal?" at creation is stored as `projects.instructions` and given to the model, editable later. Unlike Claude, which hides the description, what a student writes about their project is exactly what the agent needs.
-3. **Context is a set of vault notes, isolated to the project.** A `project_sources` row points at a vault note. Material brought in through the project (upload, a Drive file picked, text typed in) is written by the existing parsers under `projects/<projectId>/` in the vault and is _owned_: it is deleted with the project, and the ordinary `vault_search` and `vault_open` never see that folder, so normal chats never see project material. Notes from the wider vault are _linked_, not copied: one row, no duplication, and removing one from Context deletes only the row.
+3. **Context is a set of vault notes, isolated to the project.** A `project_sources` row points at a vault note. Material brought in through the project (upload, a Drive file picked, text typed in) is written by the existing parsers into a vault of the project's own, a `Vault` rooted at `<VAULT_ROOT>/<userId>/projects/<projectId>/`, and is _owned_: it is deleted with the project. The student's vault reads only its own `entities`, `episodes` and `docs` directories, so `vault_search` and `vault_open` never see a project's notes, and normal chats never see project material. Notes from the wider vault are _linked_, not copied: one row, no duplication, and removing one from Context deletes only the row.
 4. **The agent adds to Context itself, and nothing marks it.** At creation a background sweep gathers what is relevant; during chats the agent adds what it uses. Items look the same however they arrived, and every one can be removed.
 5. **Hybrid context, chosen by tokens.** Small projects carry their Context in full, cached; large ones carry a manifest and read on demand. Detail below.
 6. **The project block is frozen per chat.** The Responses API caches the system prompt as a whole blob: one changed byte drops `cached_tokens` to zero (see `buildTurnContext`). So the project block is rendered once when a chat starts, stored on the chat, and replayed byte-for-byte. What changes during the chat rides in `<turn_context>`.
@@ -30,9 +30,9 @@ New file `packages/db/src/schema/projects.ts`, exported from `schema/index.ts`, 
 
 **`agents`** gains `projectId` uuid nullable (fk `projects.id`, cascade) and `projectContext` text nullable, the frozen project block for that chat.
 
-**`project_sources`**: `id`, `projectId` (fk, cascade), `noteName` (vault note slug, including the `projects/<id>/` prefix for owned notes), `owned` boolean, `kind` (`document | pdf | image | text | drive | email`), `tokens` integer, `addedAt`. Unique on (`projectId`, `noteName`).
+**`project_sources`**: `id`, `projectId` (fk, cascade), `noteName` (vault note slug), `noteKind` (`entity | episode | document`), `owned` boolean (true: in the project's vault; false: in the student's), `summary` (one line, written once when the item is added), `kind` (`document | pdf | image | text | drive | email`), `tokens` integer, `addedAt`. Unique on (`projectId`, `noteName`).
 
-Deleting a project cascades its chats and source rows, and removes `projects/<id>/` from the vault. Linked notes elsewhere in the vault are untouched.
+Deleting a project cascades its chats and source rows, and removes the project's vault directory. Linked notes elsewhere in the vault are untouched.
 
 ## API
 
@@ -54,14 +54,14 @@ Deleting a project cascades its chats and source rows, and removes `projects/<id
 
 ### The project block
 
-Rendered by one pure function, `renderProjectBlock(project, sources, notes)`, when a project chat is created, and stored in `agents.projectContext`. It goes into tier 2 of `buildSystemPrompt`, after the universal tier and after `purpose`:
+Rendered by one pure function, `renderProjectBlock`, on a project chat's first turn, and stored in `agents.projectContext`. It is never re-rendered for that chat. It goes into tier 2 of `buildSystemPrompt`, after the universal tier and after `purpose`:
 
 1. The project name and instructions.
 2. The project memory, if any (capped at ~1.5K tokens).
-3. The manifest: one line per Context item, `name (kind): description`, about 30 tokens each.
+3. The manifest: one line per Context item, `name (kind): summary`, about 30 tokens each. The summary is one low-effort model call per item, made once when it is added; the note's own description is often only "Uploaded by the student: x.pdf", which tells the model nothing.
 4. If the Context totals **20K tokens or less** (sum of `project_sources.tokens`), the full text of every item, each under its name. Above that, a line saying Context is large and to use `project_search` and `project_open`.
 
-The block is re-rendered only when the transcript is compacted, because the cache is lost at that point anyway. A small project costs roughly 5–25K cached tokens a turn, a tenth of the uncached price after the first turn. A large one costs about 3K whatever its size, plus what the agent chooses to open.
+A small project costs roughly 5–25K cached tokens a turn, a tenth of the uncached price after the first turn. A large one costs about 3K whatever its size, plus what the agent chooses to open.
 
 Why a manifest in both modes: the failure users report with Claude's RAG mode is the model reasoning from fragments with no idea what else exists. With every item named and described, the model opens the whole document it needs instead of guessing from a chunk.
 
@@ -75,7 +75,7 @@ Registered only for project chats, in `packages/agent/src/tools/project.ts`:
 
 - **`project_search(query)`**: the existing term-match ranking (`rankByTermMatches`) over this project's notes only; returns passages with note names.
 - **`project_open(name, part?)`**: a note's full text. Notes over ~4K tokens come in numbered parts, and the result says how many there are. Refuses a note not in this project's Context.
-- **`project_add(ref)`**: `ref` is a vault note name, a Drive file id or a Gmail message id. A vault note is linked; a Drive file or a message not yet in the vault is imported through the existing collectors into `projects/<id>/` and owned. Returns what was added. Idempotent.
+- **`project_add(ref)`**: `ref` is a vault note name, a Drive file id or a Gmail message id. A vault note is linked; a Drive file or a message not yet in the vault is imported into the project's vault and owned. Returns what was added. Idempotent.
 
 `vault_search`, `vault_open`, the Drive and the Gmail tools stay available in project chats, so the agent can look outside the project. A short prompt section, present only in project chats, says: this chat belongs to a project; its Context is below; when you use something from outside the project that the project will need again, add it with `project_add`. Adding is an explicit call so that what the agent merely glanced at does not accumulate.
 
