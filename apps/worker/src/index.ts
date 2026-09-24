@@ -162,13 +162,23 @@ const jobs: Job[] = [
             ctx.db,
             bursts.map((burst) => burst.agentId),
           );
-          await writeProjectMemories(
-            ctx.db,
-            llm,
-            userId,
-            bursts.filter((burst) => inProject.has(burst.agentId)),
-            inProject,
-          );
+          /*
+           * On its own, so a project whose memory cannot be written this pass
+           * costs only that project. The watermarks above have already moved:
+           * letting this throw would skip every ordinary write below for this
+           * student and lose those exchanges for good.
+           */
+          try {
+            await writeProjectMemories(
+              ctx.db,
+              llm,
+              userId,
+              bursts.filter((burst) => inProject.has(burst.agentId)),
+              inProject,
+            );
+          } catch (error) {
+            console.error(`Project memory update failed for student ${userId}`, error);
+          }
           const ordinary = bursts.filter((burst) => !inProject.has(burst.agentId));
 
           const exchanges = ordinary.flatMap((burst) => burst.exchanges);
@@ -289,23 +299,27 @@ async function writeProjectMemories(
   }
 
   for (const [projectId, exchanges] of byProject) {
-    const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-    if (!project || project.userId !== userId) continue;
-    const memory = await updateProjectMemory(
-      { llm },
-      {
-        name: project.name,
-        instructions: project.instructions,
-        memory: project.memory,
-        exchanges,
-        userId,
-      },
-    );
-    if (memory !== null) {
-      await db
-        .update(projects)
-        .set({ memory, memoryUpdatedAt: new Date() })
-        .where(eq(projects.id, projectId));
+    try {
+      const [project] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (!project || project.userId !== userId) continue;
+      const memory = await updateProjectMemory(
+        { llm },
+        {
+          name: project.name,
+          instructions: project.instructions,
+          memory: project.memory,
+          exchanges,
+          userId,
+        },
+      );
+      if (memory !== null) {
+        await db
+          .update(projects)
+          .set({ memory, memoryUpdatedAt: new Date() })
+          .where(eq(projects.id, projectId));
+      }
+    } catch (error) {
+      console.error(`Project memory update failed for project ${projectId}`, error);
     }
   }
 }

@@ -144,7 +144,15 @@ export async function runTurnForAgent(
 
     const project = agent.projectId ? await projectForTurn(ctx, userId, agent) : undefined;
     const tools = buildToolRegistry(grant.scope, grant.disabled);
-    if (project) for (const tool of PROJECT_TOOLS) tools.register(tool);
+    if (project) {
+      for (const tool of PROJECT_TOOLS) tools.register(tool);
+      /*
+       * A project keeps what it learns to itself. vault_write would put it in
+       * the student's own vault, where every ordinary chat's vault_search
+       * finds it; the project's memory and project_add are where it goes.
+       */
+      tools.unregister('vault_write');
+    }
 
     /*
      * A file attached in a project chat went into the project, not the

@@ -40,6 +40,16 @@ export class ToolRegistry {
     return this;
   }
 
+  /**
+   * Take a tool back out. For a chat that must not have one the student's
+   * grants would otherwise give it -- a project chat writing to the vault
+   * every other chat reads.
+   */
+  unregister(id: string): this {
+    this.#tools.delete(id);
+    return this;
+  }
+
   get(id: string): Tool<never, unknown> | undefined {
     return this.#tools.get(id);
   }

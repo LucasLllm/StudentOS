@@ -3694,7 +3694,15 @@ body.dialog-open .app {
   border-top: 1px solid var(--line);
 }
 
-.project-chats button {
+.project-chat {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.project-chat-open {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 1.25rem;
@@ -3707,8 +3715,44 @@ body.dialog-open .app {
   font-weight: 400;
 }
 
-.project-chats button:hover:not(:disabled) {
+.project-chat-open:hover:not(:disabled) {
   background: var(--wash);
+}
+
+.project-chat-rename {
+  flex: 1;
+  margin: 0.45rem 0;
+}
+
+.project-chat-menu {
+  position: relative;
+  flex: none;
+}
+
+.project-chat-more {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-left: 0.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-faint);
+  opacity: 0;
+}
+
+.project-chat:hover .project-chat-more,
+.project-chat:focus-within .project-chat-more,
+.project-chat-more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .project-chat-more {
+    opacity: 1;
+  }
 }
 
 .project-chat-text {

@@ -21,15 +21,27 @@ import type { AppContext } from './context.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 let turns: { role: string; content: string }[][];
+/** The tool names each turn was offered. */
+let offered: string[][];
 
 async function contextWith(vaultRoot: string): Promise<AppContext> {
   turns = [];
+  offered = [];
   return {
     db: await testDb(),
     llm: {
-      chat: async ({ messages }: { messages: { role: string; content: string }[] }) => {
+      chat: async ({
+        messages,
+        tools,
+      }: {
+        messages: { role: string; content: string }[];
+        tools?: { name: string }[];
+      }) => {
         const user = messages.findLast((m) => m.role === 'user');
-        if (user?.content.includes('<turn_context>')) turns.push(messages);
+        if (user?.content.includes('<turn_context>')) {
+          turns.push(messages);
+          offered.push((tools ?? []).map((tool) => tool.name));
+        }
         return { content: 'ok', toolCalls: [], usage, finishReason: 'stop' as const };
       },
     },
@@ -97,6 +109,11 @@ describe('a project chat', () => {
     const db = await testDb();
     const [stored] = await db.select().from(agents).where(eq(agents.id, agent.id));
     expect(stored?.projectContext).toContain('four hundred dollars');
+
+    expect(offered[0]).toEqual(
+      expect.arrayContaining(['project_search', 'project_open', 'project_add']),
+    );
+    expect(offered[0]).not.toContain('vault_write');
   });
 
   it('keeps the same system prompt after something is added, and says what was', async () => {

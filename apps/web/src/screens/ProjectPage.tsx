@@ -46,6 +46,9 @@ export function ProjectPage({ projectId }: Props) {
     return loaded;
   }, [projectId]);
 
+  // Stable, so handing it down does not restart the Context tab's poll on every render.
+  const refresh = useCallback(() => void load(), [load]);
+
   useEffect(() => {
     void load();
     void (async () => {
@@ -158,8 +161,8 @@ export function ProjectPage({ projectId }: Props) {
         </button>
       </div>
 
-      {tab === 'chats' && <ChatList chats={chats} />}
-      {tab === 'context' && <ProjectContext project={project} onGathered={() => void load()} />}
+      {tab === 'chats' && <ChatList chats={chats} onChanged={setChats} />}
+      {tab === 'context' && <ProjectContext project={project} onGathered={refresh} />}
 
       {editing && (
         <NewProject
@@ -186,7 +189,34 @@ export function ProjectPage({ projectId }: Props) {
   );
 }
 
-function ChatList({ chats }: { chats: ProjectChat[] | null }) {
+/**
+ * The chats in the project, each with the menu a chat in the rail has.
+ *
+ * Project chats are not in the rail, so this is the only place one can be
+ * renamed or deleted -- without it the only way to be rid of one would be to
+ * delete the whole project.
+ */
+function ChatList({
+  chats,
+  onChanged,
+}: {
+  chats: ProjectChat[] | null;
+  onChanged: (chats: ProjectChat[]) => void;
+}) {
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<ProjectChat | null>(null);
+  const [deletingNow, setDeletingNow] = useState(false);
+
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = (event: MouseEvent) => {
+      if (!(event.target as Element).closest?.('.project-chat-menu')) setMenuFor(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [menuFor]);
+
   if (chats === null) return null;
   if (chats.length === 0) {
     return (
@@ -195,20 +225,103 @@ function ChatList({ chats }: { chats: ProjectChat[] | null }) {
       </p>
     );
   }
+
+  async function rename(chat: ProjectChat, next: string) {
+    setRenaming(null);
+    const name = next.trim();
+    if (!name || name === chat.name || !chats) return;
+    const res = await api.agents[':id'].$patch({ param: { id: chat.id }, json: { name } });
+    if (res.ok) onChanged(chats.map((c) => (c.id === chat.id ? { ...c, name } : c)));
+  }
+
+  async function remove(chat: ProjectChat) {
+    setDeletingNow(true);
+    try {
+      const res = await api.agents[':id'].$delete({ param: { id: chat.id } });
+      if (res.ok && chats) onChanged(chats.filter((c) => c.id !== chat.id));
+      setDeleting(null);
+    } finally {
+      setDeletingNow(false);
+    }
+  }
+
   return (
-    <ul className="project-chats">
-      {chats.map((chat) => (
-        <li key={chat.id}>
-          <button onClick={() => navigate({ name: 'chat', agentId: chat.id })}>
-            <span className="project-chat-text">
-              <span className="project-chat-name">{chat.name}</span>
-              {chat.preview && <span className="project-chat-preview">{chat.preview}</span>}
-            </span>
-            <span className="project-chat-when">{modifiedLabel(chat.updatedAt)}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="project-chats">
+        {chats.map((chat) => (
+          <li key={chat.id} className="project-chat">
+            {renaming === chat.id ? (
+              <input
+                className="project-chat-rename"
+                autoFocus
+                defaultValue={chat.name}
+                maxLength={80}
+                aria-label="Chat name"
+                onBlur={(event) => void rename(chat, event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void rename(chat, event.currentTarget.value);
+                  if (event.key === 'Escape') setRenaming(null);
+                }}
+              />
+            ) : (
+              <button
+                className="project-chat-open"
+                onClick={() => navigate({ name: 'chat', agentId: chat.id })}
+              >
+                <span className="project-chat-text">
+                  <span className="project-chat-name">{chat.name}</span>
+                  {chat.preview && <span className="project-chat-preview">{chat.preview}</span>}
+                </span>
+                <span className="project-chat-when">{modifiedLabel(chat.updatedAt)}</span>
+              </button>
+            )}
+            <div className="project-chat-menu">
+              <button
+                className="project-chat-more"
+                aria-label={`Options for ${chat.name}`}
+                aria-expanded={menuFor === chat.id}
+                onClick={() => setMenuFor((was) => (was === chat.id ? null : chat.id))}
+              >
+                <DotsIcon />
+              </button>
+              {menuFor === chat.id && (
+                <div className="chat-menu" role="menu">
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuFor(null);
+                      setRenaming(chat.id);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="danger-item"
+                    onClick={() => {
+                      setMenuFor(null);
+                      setDeleting(chat);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {deleting && (
+        <ConfirmDelete
+          title={deleting.name}
+          detail="will be permanently deleted. What it settled stays in the project's memory."
+          busy={deletingNow}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => void remove(deleting)}
+        />
+      )}
+    </>
   );
 }
 

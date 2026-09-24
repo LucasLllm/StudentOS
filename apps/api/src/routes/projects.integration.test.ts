@@ -278,4 +278,32 @@ describe('context', () => {
       image: false,
     });
   });
+
+  it('keeps two notes with the same title as two items', async () => {
+    const alice = await createUser();
+    const project = await createProject(alice.token);
+    for (const body of ['First.', 'Second.']) {
+      await app.request(
+        `/api/projects/${project.id}/sources/text`,
+        as(alice.token, { method: 'POST', body: JSON.stringify({ title: 'Feedback', body }) }),
+      );
+    }
+    const list = (await (
+      await app.request(`/api/projects/${project.id}/sources`, as(alice.token))
+    ).json()) as { sources: { name: string; preview: string }[] };
+    expect(list.sources.map((s) => s.preview).sort()).toEqual(['First.', 'Second.']);
+    expect(new Set(list.sources.map((s) => s.name)).size).toBe(2);
+  });
+
+  it('writes nothing for a project that has gone', async () => {
+    const alice = await createUser();
+    const project = await createProject(alice.token);
+    await app.request(`/api/projects/${project.id}`, as(alice.token, { method: 'DELETE' }));
+    const res = await app.request(
+      `/api/projects/${project.id}/sources/text`,
+      as(alice.token, { method: 'POST', body: JSON.stringify({ title: 'Late', body: 'x' }) }),
+    );
+    expect(res.status).toBe(404);
+    expect(existsSync(projectVault(vaultRoot, alice.id, project.id).directory)).toBe(false);
+  });
 });

@@ -239,11 +239,14 @@ export function createProjectRoutes(ctx: AppContext) {
         const added: string[] = [];
         const failed: { fileId: string; reason: string }[] = [];
         for (const fileId of c.req.valid('json').fileIds) {
+          // Each on its own: one file Drive chokes on must not lose the other nine.
           const result = await addDriveFile(ctx, summariser, {
             userId,
             projectId: project.id,
             fileId,
-          });
+          }).catch((error: unknown) => ({
+            error: error instanceof Error ? error.message : 'Drive would not open that file.',
+          }));
           if ('error' in result) failed.push({ fileId, reason: result.error });
           else added.push(result.name);
         }
@@ -286,6 +289,9 @@ export function createProjectRoutes(ctx: AppContext) {
   }
 }
 
+/** Longer than any sweep takes: two small calls and a handful of reads. */
+const GATHER_GIVE_UP_MS = 10 * 60_000;
+
 function oneLine(text: string, limit: number): string {
   const line = text.replace(/\s+/g, ' ').trim();
   return line.length <= limit ? line : `${line.slice(0, limit - 1).trimEnd()}…`;
@@ -296,7 +302,12 @@ function toProject(row: typeof projects.$inferSelect): Project {
     id: row.id,
     name: row.name,
     instructions: row.instructions,
-    gathering: row.gatheredAt === null,
+    /*
+     * A sweep lives in the process that started it. One cut short by a
+     * restart never marks itself done, so past a few minutes it is taken as
+     * finished rather than left saying "Looking through your files" for ever.
+     */
+    gathering: row.gatheredAt === null && Date.now() - row.createdAt.getTime() < GATHER_GIVE_UP_MS,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

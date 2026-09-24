@@ -48,7 +48,8 @@ export function AddContext({ projectId, onClose, onAdded }: Props) {
    * first.
    */
   async function upload(files: File[]) {
-    if (files.length === 0) return;
+    // One batch at a time: a second drop mid-upload would fight the first over the status line.
+    if (files.length === 0 || busy) return;
     const failed: string[] = [];
     for (const [index, file] of files.entries()) {
       setBusy(

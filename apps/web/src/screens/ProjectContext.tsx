@@ -34,6 +34,8 @@ const KIND_LABEL: Record<SourceKind, string> = {
 
 /** How often to look again while a new project's context is still arriving. */
 const GATHER_POLL_MS = 3000;
+/** When to stop looking whatever the server says. The server gives a sweep ten minutes. */
+const GATHER_POLL_LIMIT_MS = 5 * 60_000;
 
 /**
  * What a project knows: every item of its context, as a page you can see.
@@ -69,15 +71,27 @@ export function ProjectContext({ project, onGathered }: Props) {
    */
   useEffect(() => {
     if (!gathering) return;
+    const started = Date.now();
+    const stop = () => {
+      window.clearInterval(timer);
+      setGathering(false);
+    };
     const timer = window.setInterval(() => {
       void (async () => {
+        /*
+         * Stopped by anything but a clear "still going": a project deleted in
+         * another tab answers 404 for ever, and a page left open must not ask
+         * every three seconds until it is closed.
+         */
+        if (Date.now() - started > GATHER_POLL_LIMIT_MS) return stop();
         await load();
         const res = await api.projects[':id'].$get({ param: { id: project.id } });
-        if (res.ok && !(await res.json()).project.gathering) {
-          setGathering(false);
+        if (!res.ok) return stop();
+        if (!(await res.json()).project.gathering) {
+          stop();
           onGathered();
         }
-      })();
+      })().catch(stop);
     }, GATHER_POLL_MS);
     return () => window.clearInterval(timer);
   }, [gathering, load, project.id, onGathered]);

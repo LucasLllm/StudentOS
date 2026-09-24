@@ -139,12 +139,29 @@ export const openProjectItem: Tool<z.infer<typeof openInput>, string> = {
     const items = await itemsOf(ctx);
     if (!items) return NOT_A_PROJECT;
 
+    /*
+     * By name, or by the id the manifest shows in brackets -- with or without
+     * the version after the dot. The id is what tells two items apart when a
+     * linked note and one brought into the project happen to share a name.
+     */
     const wanted = input.name.trim().replace(/^\[|\]$/g, '');
-    const item =
-      items.find((candidate) => candidate.name === wanted) ??
-      (wanted.length === 8
-        ? items.find((candidate) => candidate.id.startsWith(wanted))
-        : undefined);
+    const id = /^([0-9a-f]{8})(?:\.[0-9a-f]+)?$/i.exec(wanted)?.[1];
+    const named = items.filter((candidate) => candidate.name === wanted);
+    const byId = id ? items.filter((candidate) => candidate.id.startsWith(id)) : [];
+    const matches = named.length > 0 ? named : byId;
+
+    if (matches.length > 1) {
+      return (
+        `Several items are called "${wanted}". Open one by its id:\n` +
+        matches
+          .map(
+            (candidate) =>
+              `- ${candidate.id.slice(0, 8)} (${candidate.kind}): ${candidate.summary}`,
+          )
+          .join('\n')
+      );
+    }
+    const item = matches[0];
 
     if (!item) {
       if (items.length === 0) return 'Nothing has been added to the project context yet.';

@@ -172,4 +172,21 @@ describe('a project page', () => {
     );
     expect(window.location.pathname).toBe('/projects');
   });
+
+  it('deletes a chat in the project from its menu', async () => {
+    await show();
+    await act(async () =>
+      (container.querySelector('.project-chat-more') as HTMLButtonElement).click(),
+    );
+    const del = [...container.querySelectorAll('.project-chat .chat-menu button')].find(
+      (b) => b.textContent === 'Delete',
+    ) as HTMLButtonElement;
+    await act(async () => del.click());
+    await act(async () => (document.querySelector('.dialog .danger') as HTMLButtonElement).click());
+    await settle();
+    expect(requests.some((r) => r.method === 'DELETE' && r.url.endsWith('/api/agents/c1'))).toBe(
+      true,
+    );
+    expect(texts('.project-chat-name')).toEqual([]);
+  });
 });

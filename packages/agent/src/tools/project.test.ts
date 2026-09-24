@@ -83,12 +83,23 @@ describe('project_open', () => {
     expect(second).not.toContain('Paragraph 0 ');
   });
 
-  it('accepts the short id from the manifest', async () => {
+  it('accepts the id from the manifest, with its version', async () => {
+    const minutes = { ...item('minutes', 'We met.'), id: 'abcdef12-0000' };
     const result = await openProjectItem.execute(
-      { name: 'minutes-' },
-      ctx(access([item('minutes', 'We met.')])),
+      { name: '[abcdef12.9f3e1c]' },
+      ctx(access([minutes])),
     );
     expect(result).toContain('We met.');
+  });
+
+  it('asks which one when two items share a name', async () => {
+    const one = { ...item('essay', 'Draft one.'), id: '11111111-a' };
+    const two = { ...item('essay', 'Draft two.'), id: '22222222-b' };
+    const result = await openProjectItem.execute({ name: 'essay' }, ctx(access([one, two])));
+    expect(result).toContain('11111111');
+    expect(result).toContain('22222222');
+    const chosen = await openProjectItem.execute({ name: '22222222' }, ctx(access([one, two])));
+    expect(chosen).toContain('Draft two.');
   });
 
   it('will not open what is not in the project, and says what is', async () => {

@@ -91,6 +91,42 @@ export async function touchProject(ctx: AppContext, projectId: string): Promise<
 }
 
 /**
+ * Whether the project is still there.
+ *
+ * Checked before anything is written for it. An add can take seconds -- a
+ * Drive read, a summary call -- and a project deleted meanwhile must not have
+ * its folder re-created under it holding somebody's email.
+ */
+export async function projectAlive(ctx: AppContext, projectId: string): Promise<boolean> {
+  const [row] = await ctx.db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * A name for a note that does not take another one's place.
+ *
+ * Titles repeat -- two Drive files called "Untitled document", two emails
+ * both "Re: Assignment" -- and a name is what decides which note is written.
+ * The same source again (same Drive file, same message) keeps its name, so
+ * adding it twice is still one item; anything else gets the next free one.
+ */
+async function freeName(vault: Vault, base: string, externalId?: string): Promise<string> {
+  for (let n = 1; n < 100; n += 1) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const existing = await vault.read('entity', candidate);
+    if (!existing) return candidate;
+    if (externalId && existing.externalId === externalId) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
+}
+
+const GONE = { error: 'That project no longer exists.' } as const;
+
+/**
  * Put a note into a project's context.
  *
  * The note is already written; this records it, sized and summarised. Adding
@@ -111,6 +147,7 @@ export async function addSource(
   },
 ): Promise<{ row: SourceRow; added: boolean } | null> {
   const root = vaultRootOf(ctx);
+  if (!(await projectAlive(ctx, input.projectId))) return null;
   const note = await vaultFor(root, input.userId, input.projectId, input.owned).read(
     input.noteKind,
     input.noteName,
@@ -132,7 +169,12 @@ export async function addSource(
 
   const summary = await summariseSource(
     { llm },
-    { userId: input.userId, title: note.description || note.name, body: note.body },
+    {
+      userId: input.userId,
+      title: note.description || note.name,
+      body: note.body,
+      untrusted: isUntrusted(note.source),
+    },
   );
   const values = {
     projectId: input.projectId,
@@ -145,19 +187,36 @@ export async function addSource(
     image: input.image ?? false,
   };
 
-  const [row] = await ctx.db
-    .insert(projectSources)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [
-        projectSources.projectId,
-        projectSources.owned,
-        projectSources.noteKind,
-        projectSources.noteName,
-      ],
-      set: { summary, tokens: values.tokens, kind: values.kind, image: values.image },
-    })
-    .returning();
+  let row: SourceRow | undefined;
+  try {
+    [row] = await ctx.db
+      .insert(projectSources)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          projectSources.projectId,
+          projectSources.owned,
+          projectSources.noteKind,
+          projectSources.noteName,
+        ],
+        set: { summary, tokens: values.tokens, kind: values.kind, image: values.image },
+      })
+      .returning();
+  } catch (error) {
+    /*
+     * The project went while this was being summarised: the row cannot point
+     * at it, and a note written for it has nowhere to belong. Take the note
+     * back out rather than leave it on disk with nothing listing it.
+     */
+    if (input.owned && !(await projectAlive(ctx, input.projectId))) {
+      await projectVault(root, input.userId, input.projectId).remove(
+        input.noteKind,
+        input.noteName,
+      );
+      return null;
+    }
+    throw error;
+  }
   if (!row) return null;
 
   await touchProject(ctx, input.projectId);
@@ -170,6 +229,9 @@ export async function addUpload(
   llm: Summariser & Partial<LlmProvider>,
   input: { userId: string; projectId: string; file: File; context?: string },
 ): Promise<{ result: UploadResult; row?: SourceRow }> {
+  if (!(await projectAlive(ctx, input.projectId))) {
+    throw new ContextoError('not_found', 'Project not found.');
+  }
   const vault = projectVault(vaultRootOf(ctx), input.userId, input.projectId);
   const result = await importUpload(
     vault,
@@ -204,8 +266,11 @@ export async function addText(
   llm: Summariser,
   input: { userId: string; projectId: string; title: string; body: string },
 ): Promise<SourceRow | null> {
-  const name = uploadNoteName(input.title) || 'note';
-  await projectVault(vaultRootOf(ctx), input.userId, input.projectId).write({
+  if (!(await projectAlive(ctx, input.projectId))) return null;
+  const vault = projectVault(vaultRootOf(ctx), input.userId, input.projectId);
+  // Always a note of its own: pasting a second note with the same title is a second note.
+  const name = await freeName(vault, uploadNoteName(input.title) || 'note');
+  await vault.write({
     name,
     kind: 'entity',
     source: 'student',
@@ -226,10 +291,17 @@ export async function addText(
 /** What the Google tools need to read on the student's behalf, outside a turn. */
 export async function googleContext(ctx: AppContext, userId: string): Promise<ToolContext> {
   const grant = await getGoogleGrant(ctx.db, userId);
+  /*
+   * Without what the student switched off. A turn never registers the tools
+   * of a disabled integration; reading on their behalf outside a turn must
+   * not reach round that -- a student who turned Gmail off has said so.
+   */
+  const disabled = new Set<string>(grant.disabled);
+  const groups = grant.groups.filter((group) => !disabled.has(group));
   return {
     userId,
     agentId: '',
-    google: new BetterAuthGoogleTokenProvider(ctx.auth, userId, grant.groups, grant.scope),
+    google: new BetterAuthGoogleTokenProvider(ctx.auth, userId, groups, grant.scope),
   };
 }
 
@@ -245,6 +317,7 @@ export async function addDriveFile(
   llm: Summariser,
   input: { userId: string; projectId: string; fileId: string; google?: ToolContext },
 ): Promise<{ name: string; added: boolean } | { error: string }> {
+  if (!(await projectAlive(ctx, input.projectId))) return GONE;
   const google = input.google ?? (await googleContext(ctx, input.userId));
   const read = await readDriveFile.execute({ fileId: input.fileId }, google);
 
@@ -257,8 +330,10 @@ export async function addDriveFile(
   if (!text) return { error: refusal(read, 'There is no readable text in that file.') };
 
   const title = (read as { name?: string }).name ?? 'Drive file';
-  const name = uploadNoteName(title) || `drive-${input.fileId.slice(0, 8).toLowerCase()}`;
-  await projectVault(vaultRootOf(ctx), input.userId, input.projectId).write({
+  const vault = projectVault(vaultRootOf(ctx), input.userId, input.projectId);
+  if (!(await projectAlive(ctx, input.projectId))) return GONE;
+  const name = await freeName(vault, uploadNoteName(title) || 'drive-file', input.fileId);
+  await vault.write({
     name,
     kind: 'entity',
     source: 'drive',
@@ -284,14 +359,17 @@ export async function addMail(
   llm: Summariser,
   input: { userId: string; projectId: string; messageId: string; google?: ToolContext },
 ): Promise<{ name: string; added: boolean } | { error: string }> {
+  if (!(await projectAlive(ctx, input.projectId))) return GONE;
   const google = input.google ?? (await googleContext(ctx, input.userId));
   const read = await readMail.execute({ messageId: input.messageId }, google);
   if (isUnavailable(read)) return { error: refusal(read, 'That email could not be read.') };
 
   const mail = read as { subject?: string; from?: string; date?: string; body?: string };
   const subject = mail.subject?.trim() || 'Email';
-  const name = uploadNoteName(`mail ${subject}`) || `mail-${input.messageId.slice(0, 8)}`;
-  await projectVault(vaultRootOf(ctx), input.userId, input.projectId).write({
+  const vault = projectVault(vaultRootOf(ctx), input.userId, input.projectId);
+  if (!(await projectAlive(ctx, input.projectId))) return GONE;
+  const name = await freeName(vault, uploadNoteName(`mail ${subject}`) || 'mail', input.messageId);
+  await vault.write({
     name,
     kind: 'entity',
     source: 'gmail',
