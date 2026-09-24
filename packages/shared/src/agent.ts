@@ -21,6 +21,8 @@ export const agentSchema = z.object({
   archivedAt: z.iso.datetime().nullable(),
   /** When it was pinned, if it is. Ordered by this, so the newest pin leads. */
   pinnedAt: z.iso.datetime().nullable(),
+  /** The project this chat belongs to, or null for an ordinary chat. */
+  projectId: z.string().nullable().default(null),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -65,6 +67,8 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export const createAgentSchema = z.object({
   name: z.string().min(1).max(80),
   purpose: z.string().max(2000).default(''),
+  /** Start the chat inside this project. Must be one of the caller's. */
+  projectId: z.uuid().optional(),
 });
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 

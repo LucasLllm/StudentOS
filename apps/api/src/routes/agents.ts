@@ -386,6 +386,7 @@ function toAgent(row: typeof agents.$inferSelect): Agent {
     profile: row.profile,
     archivedAt: row.archivedAt?.toISOString() ?? null,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
+    projectId: row.projectId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

@@ -1,5 +1,6 @@
 import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { user } from './auth.js';
+import { projects } from './projects.js';
 
 /**
  * A student-built agent.
@@ -66,8 +67,22 @@ export const agents = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     /** Pinned to the top of the rail. Ordered by when, so the newest pin leads. */
     pinnedAt: timestamp('pinned_at', { withTimezone: true }),
+    /**
+     * The project this chat belongs to, if any. Such a chat is listed on the
+     * project's page rather than in the rail, and goes when the project does.
+     */
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    /**
+     * The project as this chat was first told it, frozen.
+     *
+     * The system prompt is cached as a whole, so a project block rebuilt each
+     * turn would cost the chat its cache the moment anything was added to the
+     * project. It is written on the first turn and replayed byte for byte;
+     * what changes afterwards is told in the turn context instead.
+     */
+    projectContext: text('project_context'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('agents_user_id_idx').on(t.userId)],
+  (t) => [index('agents_user_id_idx').on(t.userId), index('agents_project_id_idx').on(t.projectId)],
 );

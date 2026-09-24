@@ -364,6 +364,7 @@ describe('the order the rail is in', () => {
     profile: '',
     archivedAt: null,
     pinnedAt,
+    projectId: null,
     updatedAt,
     createdAt: '',
   });

@@ -6,5 +6,6 @@
  */
 
 export * from './agent.js';
+export * from './project.js';
 export * from './llm.js';
 export * from './errors.js';
