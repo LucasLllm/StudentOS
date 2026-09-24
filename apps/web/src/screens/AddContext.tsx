@@ -76,7 +76,9 @@ export function AddContext({ projectId, onClose, onAdded }: Props) {
         param: { id: projectId },
         json: { fileIds: picked.slice(0, 10).map((doc) => doc.id) },
       });
-      if (!res.ok) throw new Error(`Drive files could not be added (${res.status}).`);
+      if (!res.ok) {
+        throw new Error(await refusal(res, `Drive files could not be added (${res.status}).`));
+      }
       const { failed } = await res.json();
       onAdded();
       setBusy(null);
@@ -98,7 +100,7 @@ export function AddContext({ projectId, onClose, onAdded }: Props) {
     });
     setBusy(null);
     if (!res.ok) {
-      setProblems([`That could not be saved (${res.status}).`]);
+      setProblems([await refusal(res, `That could not be saved (${res.status}).`)]);
       return;
     }
     onAdded();
@@ -225,6 +227,12 @@ export function AddContext({ projectId, onClose, onAdded }: Props) {
     </div>,
     document.body,
   );
+}
+
+/** The server's own sentence, which says what to do; a status code does not. */
+async function refusal(res: Response, fallback: string): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { message?: string } | null;
+  return body?.message ?? fallback;
 }
 
 function DropIcon() {
