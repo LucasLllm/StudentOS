@@ -29,7 +29,6 @@ const mentioned = (text) =>
 describe('failure codes', () => {
   const inSource = mentioned(source);
   const inTests = mentioned(tests);
-  const families = new Set(Object.keys(CODES).map((c) => c.split('.')[0]));
 
   it('are all produced somewhere in the app', () => {
     const unused = Object.keys(CODES).filter((code) => !inSource.has(code));

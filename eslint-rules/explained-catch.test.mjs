@@ -20,6 +20,11 @@ tester.run('explained-catch', rule, {
        }
      }`,
     `try { a() } catch { /* expected: already detached */ }`,
+    `try { a() } catch {
+       /*
+        * expected: a multi-line block comment, starred.
+        */
+     }`,
     `p.catch((e) => logEvent('x', e.message))`,
     `p.catch((e) => { note('close.failed', { error: e.message }) })`,
     `p.catch((e) => { throw new Failure('nav.failed', e.message) })`,

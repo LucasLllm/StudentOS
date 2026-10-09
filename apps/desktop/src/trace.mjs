@@ -115,6 +115,7 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
     value = await store.run(current, fn);
     record.outcome = 'ok';
   } catch (error) {
+    // expected: this is the recorder -- classify() makes the error the outcome.
     try {
       classify(record, error);
     } catch (unreadable) {

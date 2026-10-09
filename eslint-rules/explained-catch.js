@@ -23,7 +23,7 @@ function explains(node, sourceCode) {
     : sourceCode
         .getAllComments()
         .filter((c) => c.range[0] >= node.range[0] && c.range[1] <= node.range[1]);
-  if (comments.some((c) => /^\s*expected:\s*\S/.test(c.value))) return true;
+  if (comments.some((c) => /^[\s*]*expected:\s*\S/.test(c.value))) return true;
 
   let found = false;
   const visit = (n) => {
