@@ -55,6 +55,8 @@ export const CODES = Object.freeze({
   'sync.push_failed': 'The site was read, but what was found could not be sent.',
   'sync.device_unlinked': 'This computer was unlinked from the account.',
 
+  'transport.offline': 'The computer could not reach the server.',
+  'transport.busy': 'The computer was busy with other browser work and turned this away.',
   'transport.report_failed': 'The work finished, but its result could not be sent back.',
 
   'internal.unexpected': 'Something went wrong on their computer that it has no explanation for.',

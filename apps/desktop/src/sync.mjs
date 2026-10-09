@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname, homedir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
+import { logEvent } from './trace-store.mjs';
 
 /**
  * Talking to the server.
@@ -36,7 +37,14 @@ export function configPath() {
 export function readConfig() {
   try {
     return JSON.parse(readFileSync(configPath(), 'utf8'));
-  } catch {
+  } catch (error) {
+    // expected: no config yet on a first run. Anything else -- a corrupted
+    // file -- is worth a line in the log, since it reads as "not linked".
+    if (error?.code !== 'ENOENT') {
+      logEvent('internal.unexpected', 'The config file could not be read.', {
+        error: String(error?.message ?? error),
+      });
+    }
     return {};
   }
 }
@@ -112,6 +120,7 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   try {
     parsed = text ? JSON.parse(text) : {};
   } catch {
+    // expected: not JSON. Handled just below, with the address as the clue.
     parsed = null;
   }
 
@@ -199,9 +208,12 @@ export async function sessionValid({ apiBase, sessionToken }) {
       headers: { authorization: `Bearer ${sessionToken}` },
     });
     return response.ok;
-  } catch {
+  } catch (error) {
     // Offline. Treat the session as good rather than throwing it away over a
     // dropped connection -- it may well still work once there is a network.
+    logEvent('transport.offline', 'Could not check the session; assuming it is still good.', {
+      error: String(error?.message ?? error),
+    });
     return true;
   }
 }
