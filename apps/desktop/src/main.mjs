@@ -2,12 +2,15 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { app, BrowserWindow, ipcMain, Menu, session, shell, Tray } from 'electron';
 import {
+  DeviceUnlinked,
+  heartbeat,
   link,
   pendingWork,
   readConfig,
   refreshSession,
   reportWork,
   sessionValid,
+  uploadAttempt,
 } from './sync.mjs';
 import {
   clearCredentials,
@@ -28,7 +31,9 @@ import {
   status,
   syncPortal,
 } from './operations.mjs';
-import { ActionError } from './page-actions.mjs';
+import { Failure, attempt, onRecord } from './trace.mjs';
+import { flushOutbox, logEvent, queueUpload, writeLocal } from './trace-store.mjs';
+import { needsLoginFailure, reportWithRetry, runWorkItem, throughGate, whenFree } from './work.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const API_BASE = process.env['CONTEXTO_API'] ?? 'https://contextoagent.ai';
@@ -59,6 +64,15 @@ const STALE_AFTER_MS = 60 * 60 * 1000;
  * is linked.
  */
 const WORK_POLL_MS = 3 * 1000;
+
+/**
+ * How often to tell the server what the app is doing.
+ *
+ * Separate from the work poll, and outside the one-browser-at-a-time gate:
+ * the poll is turned away while a long sync holds the browser, and a laptop
+ * that went quiet for that reason looked exactly like one that was asleep.
+ */
+const HEARTBEAT_MS = 10 * 1000;
 
 let mainWindow = null;
 let tray = null;
@@ -143,6 +157,7 @@ function showWindow() {
       try {
         return new URL(url).host;
       } catch {
+        // expected: not a URL, so it is not one of ours and goes outside.
         return '';
       }
     })();
@@ -230,6 +245,7 @@ function handle(channel, fn) {
       refreshTrayMenu();
       return { ok: true, value };
     } catch (error) {
+      // expected: the window shows this message to the student who asked.
       return { ok: false, error: String(error?.message ?? error) };
     }
   });
@@ -272,8 +288,13 @@ handle('signIn', async () => {
       await refreshSession({ apiBase, token: config.token });
       reloadApp();
       return { via: 'device' };
-    } catch {
+    } catch (error) {
       // Device revoked or offline; fall through to linking again.
+      logEvent(
+        error instanceof DeviceUnlinked ? 'sync.device_unlinked' : 'transport.offline',
+        'Could not get a session from the device link; linking again.',
+        { error: String(error?.message ?? error) },
+      );
     }
   }
 
@@ -285,14 +306,20 @@ handle('signIn', async () => {
 handle('addPortal', (site) => {
   const portal = addSite(site);
   // Added is added. The first sign-in and read follow quietly, and a site
-  // they do not work for is signed into by the agent when it opens it.
-  void drivingBrowser(() => firstSignIn(portal.id))
-    .catch(() => {})
-    .finally(notifyChanged);
+  // they do not work for is signed into by the agent when it opens it. Quietly
+  // for the student, not for the trace: how it went is recorded either way.
+  void whenFree(
+    drivingBrowser,
+    () => attempt({ kind: 'first_sign_in', portalId: portal.id }, () => firstSignIn(portal.id)),
+    { kind: 'first_sign_in', portalId: portal.id },
+    'the first sign-in',
+  ).finally(notifyChanged);
   return { portal };
 });
 handle('removePortal', (id) => removePortal(id));
-handle('syncPortal', (id) => syncPortal(id));
+handle('syncPortal', (id) =>
+  traced({ kind: 'sync', portalId: id }, () => syncPortal(id), needsLoginFailure),
+);
 
 /*
  * Saved sign-ins. The password crosses this boundary once, on its way to the
@@ -302,7 +329,45 @@ handle('syncPortal', (id) => syncPortal(id));
 handle('saveCredentials', (id, creds) => saveCredentials(id, creds));
 handle('hasCredentials', (id) => ({ saved: hasCredentials(id), available: keychainAvailable() }));
 handle('clearCredentials', (id) => clearCredentials(id));
-handle('autoSignIn', (id) => autoSignIn(id));
+handle('autoSignIn', (id) =>
+  traced(
+    { kind: 'auto_sign_in', portalId: id },
+    () => autoSignIn(id),
+    (signedIn) =>
+      signedIn.ok ? null : new Failure(signedIn.code ?? 'signin.no_credentials', signedIn.reason),
+  ),
+);
+
+/**
+ * Run something the window asked for, through the one-browser gate, as a
+ * traced attempt.
+ *
+ * `judge` turns an answer that means it did not work -- a sign-in that was
+ * refused, a sync that found a sign-in page -- into the failure the trace
+ * records. The window still gets the answer it always got, so it can show it.
+ */
+async function traced(label, fn, judge = () => null) {
+  let value;
+  let done;
+  const ran = await throughGate(
+    drivingBrowser,
+    async () => {
+      done = await attempt(label, async () => {
+        value = await fn();
+        const failure = judge(value);
+        if (failure) throw failure;
+        return value;
+      });
+    },
+    label,
+    `${label.kind} for ${label.portalId}`,
+  );
+  if (!ran) {
+    throw new Error('The browser is busy with other work right now. Try again in a moment.');
+  }
+  if (done.ok || value !== undefined) return value;
+  throw new Error(done.message);
+}
 
 /*
  * The page reporting where its frame is. Sent on every layout change --
@@ -345,7 +410,12 @@ handle('siteViewBounds', (bounds) => {
  * ask for one. The window shows the last error per portal instead.
  */
 async function syncAll({ onlyStale = false } = {}) {
-  return drivingBrowser(() => syncAllPass({ onlyStale }));
+  return throughGate(
+    drivingBrowser,
+    () => syncAllPass({ onlyStale }),
+    { kind: 'sync_all' },
+    'a scheduled sync',
+  );
 }
 
 async function syncAllPass({ onlyStale }) {
@@ -359,11 +429,14 @@ async function syncAllPass({ onlyStale }) {
       const age = Date.now() - new Date(portal.lastSyncedAt).getTime();
       if (age < STALE_AFTER_MS) continue;
     }
-    try {
-      await syncPortal(portal.id);
-    } catch {
-      /* recorded against the portal by syncPortal */
-    }
+    // Recorded as an attempt; a failure here is also kept on the portal by
+    // syncPortal, which is what the Sites list shows.
+    await attempt({ kind: 'sync', portalId: portal.id }, async () => {
+      const synced = await syncPortal(portal.id);
+      const failure = needsLoginFailure(synced);
+      if (failure) throw failure;
+      return synced;
+    });
     // Per portal rather than at the end, so a slow second portal does not hold
     // back the result of the first.
     notifyChanged();
@@ -398,38 +471,106 @@ async function doPendingWork() {
   let work;
   try {
     work = await pendingWork(creds);
-  } catch {
-    return; // Offline, or the device was revoked. Nothing to do either way.
+    noteConnection(null);
+  } catch (error) {
+    // expected: offline, or the device was revoked. Nothing to do either way
+    // -- noteConnection logs the change, once, so a quiet laptop has a reason.
+    noteConnection(error);
+    return;
   }
 
   for (const item of work) {
-    let outcome;
-    let result;
-    try {
-      // Tagging the work means its browser appears in the conversation that
-      // asked for it, rather than floating over whatever the student is
-      // looking at.
-      setWorkingForAgent(item.agentId);
-      if (item.kind === 'browse') {
-        result = await browsePage(item.targetUrl);
-        outcome = 'read';
-      } else if (item.kind === 'act') {
-        result = await actOnPage(item.payload ?? {});
-        outcome = 'read';
-      } else {
-        const synced = await syncPortal(item.portalId);
-        outcome = synced.needsLogin ? 'needs_login' : 'synced';
-      }
-    } catch (error) {
-      outcome = 'failed';
-      // Only a reason this app wrote itself travels back. Anything else could
-      // be carrying the page's own words, and the page is not to be trusted.
-      if (error instanceof ActionError) result = { reason: error.message };
-    }
+    // Tagging the work means its browser appears in the conversation that
+    // asked for it, rather than floating over whatever the student is
+    // looking at.
+    setWorkingForAgent(item.agentId);
+    currentItem = {
+      kind: item.kind,
+      portalId: item.portalId || null,
+      requestId: item.id,
+      since: new Date().toISOString(),
+    };
+    // Only a reason this app wrote itself travels back: runWorkItem keeps the
+    // words of any other error in the trace, because they could be the page's.
+    const { outcome, result, record } = await runWorkItem(item, {
+      browsePage,
+      actOnPage,
+      syncPortal,
+    });
     setWorkingForAgent(null);
-    await reportWork(creds, item.id, outcome, result).catch(() => {});
+    currentItem = null;
+    const report = await reportWithRetry(() => reportWork(creds, item.id, outcome, result));
+    if (!report.sent) {
+      logEvent('transport.report_failed', 'Finished work but could not report it.', {
+        requestId: item.id,
+        attemptId: record.id,
+        tries: report.tries,
+        error: report.error,
+      });
+    }
     notifyChanged();
   }
+}
+
+/**
+ * The agent's work under way, if any. The work poll holds the browser gate for
+ * every three-second check, so the gate alone would report the laptop as busy
+ * when it is only asking whether there is anything to do.
+ */
+let currentItem = null;
+
+function busyWith() {
+  const held = drivingBrowser.current();
+  if (held?.kind === 'agent_work') return currentItem;
+  return held;
+}
+
+/** The last connection problem logged, so each change is logged once. */
+let connectionProblem = null;
+
+function noteConnection(error) {
+  const code = !error
+    ? null
+    : error instanceof DeviceUnlinked
+      ? 'sync.device_unlinked'
+      : 'transport.offline';
+  if (code === connectionProblem) return;
+  connectionProblem = code;
+  if (code) {
+    logEvent(code, 'Could not ask the server for work.', {
+      error: String(error?.message ?? error),
+    });
+  } else {
+    logEvent('transport.online', 'Reached the server again.');
+  }
+}
+
+/** Send the traces waiting in the outbox, one flush at a time. */
+let flushing = false;
+async function flushTraces() {
+  const config = readConfig();
+  if (flushing || !config.token) return;
+  flushing = true;
+  try {
+    const creds = { apiBase: config.apiBase ?? API_BASE, token: config.token };
+    await flushOutbox((record) => uploadAttempt(creds, record));
+  } finally {
+    flushing = false;
+  }
+}
+
+/** Tell the server what holds the browser, if anything. */
+async function beat() {
+  const config = readConfig();
+  if (!config.token) return;
+  const creds = { apiBase: config.apiBase ?? API_BASE, token: config.token };
+  try {
+    await heartbeat(creds, busyWith());
+  } catch (error) {
+    // expected: noteConnection logs a change in whether the server answers.
+    noteConnection(error);
+  }
+  void flushTraces();
 }
 
 /**
@@ -484,7 +625,7 @@ function detachSiteView() {
   try {
     mainWindow.contentView.removeChildView(activeSession.view);
   } catch {
-    // The window is already tearing down; the view goes with it either way.
+    // expected: the window is already tearing down; the view goes with it.
   }
 }
 
@@ -599,9 +740,14 @@ async function ensureSession() {
 
   try {
     await refreshSession({ apiBase, token: config.token });
-  } catch {
+  } catch (error) {
     // A revoked device or an offline start. The window still opens; the web
     // app will ask for a sign-in, which is the honest outcome either way.
+    logEvent(
+      error instanceof DeviceUnlinked ? 'sync.device_unlinked' : 'transport.offline',
+      'Could not refresh the session at start-up.',
+      { error: String(error?.message ?? error) },
+    );
   }
 }
 
@@ -621,6 +767,16 @@ app.on('second-instance', () => showWindow());
 
 void app.whenReady().then(async () => {
   if (!onlyCopy) return;
+  /*
+   * Every finished attempt is kept on this Mac first, then queued to send. The
+   * send happens in the background and is retried, so a trace written while
+   * offline still reaches the debug page later.
+   */
+  onRecord((record) => {
+    writeLocal(record);
+    queueUpload(record);
+    void flushTraces();
+  });
   observeSessions({ open: attachSiteView, close: markSiteViewIdle, frame: sendSiteFrame });
   attachSession();
   await ensureSession();
@@ -628,7 +784,9 @@ void app.whenReady().then(async () => {
   buildTray();
   void syncAll({ onlyStale: true });
   setInterval(() => void syncAll(), SYNC_INTERVAL_MS);
-  setInterval(() => void drivingBrowser(doPendingWork), WORK_POLL_MS);
+  setInterval(() => void drivingBrowser(doPendingWork, { kind: 'agent_work' }), WORK_POLL_MS);
+  setInterval(() => void beat(), HEARTBEAT_MS);
+  void beat();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) showWindow();

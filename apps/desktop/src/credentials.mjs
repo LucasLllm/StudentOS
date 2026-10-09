@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { Failure, note, secret } from './trace.mjs';
 
 /**
  * Site sign-ins, kept in the login keychain.
@@ -39,11 +40,26 @@ export function saveCredentials(portalId, { username, password }) {
   return { username };
 }
 
-/** @returns {{ username: string, password: string } | null} */
-export function readCredentials(portalId) {
+/** What `security` exits with when there is no such item (errSecItemNotFound). */
+const NOT_FOUND = 44;
+
+/**
+ * The saved sign-in for a site, or null when there is none.
+ *
+ * Throws when there is one but the keychain would not hand it over -- the
+ * student declined the prompt, or the keychain is locked. That used to read as
+ * "no saved sign-in", which sent everyone looking for a sign-in that was there
+ * all along.
+ *
+ * The password is registered as a secret with the trace under way, so it is
+ * blanked wherever it might turn up in one.
+ *
+ * @returns {{ username: string, password: string } | null}
+ */
+export function readCredentials(portalId, { exec = execFileSync } = {}) {
   if (!keychainAvailable()) return null;
   try {
-    const password = execFileSync(
+    const password = exec(
       'security',
       ['find-generic-password', '-s', SERVICE(portalId), '-w'],
       // stderr silenced: "item could not be found" is the normal answer for a
@@ -51,16 +67,24 @@ export function readCredentials(portalId) {
       // like a fault.
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).replace(/\n$/, '');
-    const dump = execFileSync('security', ['find-generic-password', '-s', SERVICE(portalId)], {
+    const dump = exec('security', ['find-generic-password', '-s', SERVICE(portalId)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const username = /"acct"<blob>="([^"]*)"/.exec(dump)?.[1] ?? '';
-    return password ? { username, password } : null;
-  } catch {
-    // No entry, or the student declined the keychain prompt. Both mean "no
-    // saved sign-in", which is a normal state rather than a failure.
-    return null;
+    if (!password) return null;
+    secret(password);
+    return { username, password };
+  } catch (error) {
+    if (error?.status === NOT_FOUND) return null; // expected: nothing saved for this site.
+    if (error?.code === 'ENOENT') {
+      throw new Failure('signin.keychain_unavailable', undefined, { portalId });
+    }
+    note('keychain.refused', { portalId, status: error?.status ?? null });
+    throw new Failure('signin.keychain_declined', undefined, {
+      portalId,
+      status: error?.status ?? null,
+    });
   }
 }
 
@@ -73,6 +97,7 @@ export function hasCredentials(portalId) {
     });
     return true;
   } catch {
+    // expected: not found (or not readable), which is what "no" means here.
     return false;
   }
 }
@@ -85,6 +110,27 @@ export function clearCredentials(portalId) {
     });
     return true;
   } catch {
+    // expected: there was nothing to delete.
     return false;
+  }
+}
+
+/**
+ * The saved sign-in for a background job that can carry on without one.
+ *
+ * A sync whose session cookies still work does not need the keychain at all,
+ * so a refused keychain prompt must not stop it -- it is noted, and reported as
+ * the reason if the site does turn out to want a sign-in.
+ *
+ * @returns {{ creds: { username: string, password: string } | null,
+ *   refused: 'signin.keychain_declined' | 'signin.keychain_unavailable' | null }}
+ */
+export function savedSignIn(portalId, options) {
+  try {
+    return { creds: readCredentials(portalId, options), refused: null };
+  } catch (error) {
+    if (!(error instanceof Failure)) throw error;
+    note('keychain.carrying_on_without', { portalId, code: error.code });
+    return { creds: null, refused: error.code };
   }
 }

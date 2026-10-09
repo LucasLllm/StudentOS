@@ -195,7 +195,12 @@ export interface PortalSnapshotSource {
   awaitRefresh(
     requestId: string,
     timeoutMs: number,
-  ): Promise<{ finished: boolean; outcome?: string | null }>;
+  ): Promise<{
+    finished: boolean;
+    outcome?: string | null;
+    /** When the wait ran out: why, as far as the server can tell. */
+    why?: { code: string; message: string };
+  }>;
   /**
    * Ask the student's computer to open one page and read it back.
    *

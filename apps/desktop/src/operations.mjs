@@ -9,10 +9,13 @@
 
 import { PortalBrowser } from './browser.mjs';
 import { fillScript, explainFailure, INSPECT_SCRIPT } from './sign-in.mjs';
-import { readCredentials, saveCredentials } from './credentials.mjs';
+import { readCredentials, saveCredentials, savedSignIn } from './credentials.mjs';
+import { needsLoginFailure } from './work.mjs';
 import { explore } from './explorer.mjs';
-import { ActionError, SNAPSHOT_SCRIPT, performAction } from './page-actions.mjs';
+import { SNAPSHOT_SCRIPT, performAction } from './page-actions.mjs';
 import { DeviceUnlinked, pushSnapshot, readConfig, writeConfig } from './sync.mjs';
+import { CODES } from './failure-codes.mjs';
+import { Failure, note, setCapture } from './trace.mjs';
 
 /**
  * Open a browser for a site.
@@ -72,6 +75,9 @@ async function openBrowser(portalId) {
     const { SiteSession } = await import('./site-session.mjs');
     const session = new SiteSession({ portalId, agentId: workingForAgent });
     await session.launch();
+    note('browser.opened', { portalId, shown: showsInChat(session) });
+    // A still of the page if this attempt fails, for the debug page.
+    setCapture(() => session.capture());
     // Nowhere to show it, so the window is never told it exists. It still
     // runs, and still reads the portal; it just does so out of sight.
     if (!showsInChat(session)) return session;
@@ -102,19 +108,31 @@ async function openBrowser(portalId) {
  * pile up a run for every tick that happened during a slow page.
  */
 export function oneAtATime() {
-  let busy = false;
-  return async (fn) => {
-    if (busy) return false;
-    busy = true;
+  let running = null;
+  /**
+   * @param {() => Promise<unknown>} fn
+   * @param {{ kind?: string, portalId?: string|null }} [label] what this pass is,
+   *   so the heartbeat can say what the browser is busy with
+   */
+  const gate = async (fn, label = {}) => {
+    if (running) return false;
+    running = {
+      kind: label.kind ?? 'work',
+      portalId: label.portalId ?? null,
+      since: new Date().toISOString(),
+    };
     try {
       await fn();
       return true;
     } finally {
       // In a finally, so one failing portal cannot wedge the gate shut and
       // silently stop every poll for the life of the app.
-      busy = false;
+      running = null;
     }
   };
+  /** What holds the browser right now, or null. */
+  gate.current = () => running;
+  return gate;
 }
 
 /** Syncs currently running, keyed by portal. */
@@ -203,9 +221,15 @@ export function addSite({ name, url, username, password }) {
  */
 export async function firstSignIn(portalId) {
   const signedIn = await autoSignIn(portalId);
+  if (!signedIn.ok) {
+    // Nothing saved is nothing to do, not a failure: the agent signs in later.
+    if (!signedIn.attempted) return;
+    throw new Failure(signedIn.code, signedIn.reason);
+  }
   // No second look needed: signing in recorded where the site put us, which
   // is the site.
-  if (signedIn.ok) await syncPortal(portalId);
+  const failure = needsLoginFailure(await syncPortal(portalId));
+  if (failure) throw failure;
 }
 
 /**
@@ -225,6 +249,7 @@ export function sameSite(siteOrigin, pageOrigin) {
     site = new URL(siteOrigin);
     page = new URL(pageOrigin ?? '');
   } catch {
+    // expected: not a URL, so it belongs to no site.
     return false;
   }
   if (site.protocol !== 'https:' || page.protocol !== 'https:') return false;
@@ -238,6 +263,7 @@ export function isGoogleSignIn(origin) {
   try {
     return new URL(origin).origin === 'https://accounts.google.com';
   } catch {
+    // expected: not a URL, so not Google's sign-in page.
     return false;
   }
 }
@@ -285,7 +311,7 @@ function rememberFlow(url) {
     const site = listPortals().find((p) => sameSite(p.origin, origin));
     if (site) flowPortal = site.id;
   } catch {
-    // Not a URL we can read; the flow is whatever it already was.
+    // expected: not a URL we can read; the flow is whatever it already was.
   }
 }
 
@@ -323,7 +349,12 @@ function resumeBrowser(session) {
  * is most of the reason to browse from their machine rather than the server.
  */
 export async function browsePage(url) {
-  const target = new URL(url);
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    throw new Failure('nav.invalid_url', `"${String(url).slice(0, 200)}" is not a web address.`);
+  }
   const site = listPortals().find((p) => sameSite(p.origin, target.origin));
   // Only a name now: every view shares one store, so a page behind a login
   // the student has anywhere in it simply opens. A connected site is called
@@ -349,16 +380,25 @@ export async function browsePage(url) {
   const browser = same ? resumeBrowser(open) : await openBrowser(label);
   current = browser.view ? browser : null;
   try {
-    await browser.openPage(target.toString());
+    const { load } = await browser.openPage(target.toString());
     // Give a page that builds itself a moment to do so.
     await new Promise((r) => setTimeout(r, 2500));
-    const read = await evaluate(browser, SNAPSHOT_SCRIPT);
-    rememberFlow(JSON.parse(read).url);
+    const read = JSON.parse(await evaluate(browser, SNAPSHOT_SCRIPT));
+    rememberFlow(read.url);
     await reportFrame(browser);
     await browser.close();
-    return JSON.parse(read);
+    /*
+     * How the load went travels with the page. A site's "Not Found" page is
+     * still a page, and readable -- but an agent told only "here is the page"
+     * reads a 404 as the answer it was looking for.
+     */
+    return {
+      ...read,
+      ...(typeof load?.status === 'number' ? { httpStatus: load.status } : {}),
+      ...(load?.timedOut ? { stillLoading: true } : {}),
+    };
   } catch (error) {
-    await browser.close().catch(() => {});
+    await browser.close().catch((e) => note('browser.close_failed', { error: e.message }));
     throw error;
   }
 }
@@ -373,9 +413,12 @@ export async function browsePage(url) {
 export async function actOnPage(action) {
   const page = pageLeftOpen();
   if (!page || !showsInChat(page) || page.agentId !== workingForAgent) {
-    throw new ActionError(
-      'There is no page open in this conversation. Open one with browser_open first.',
-    );
+    note('act.no_page', {
+      open: Boolean(page),
+      shown: Boolean(page && showsInChat(page)),
+      sameConversation: Boolean(page && page.agentId === workingForAgent),
+    });
+    throw new Failure('page.no_page_open');
   }
   const browser = resumeBrowser(page);
   try {
@@ -396,7 +439,7 @@ export async function actOnPage(action) {
     await browser.close();
     return read;
   } catch (error) {
-    await browser.close().catch(() => {});
+    await browser.close().catch((e) => note('browser.close_failed', { error: e.message }));
     throw error;
   }
 }
@@ -432,12 +475,21 @@ function updatePortal(portalId, patch) {
  * into the page and are never written anywhere else, never logged, and never
  * sent to the server.
  */
-export async function autoSignIn(portalId) {
+export async function autoSignIn(portalId, { saved: known } = {}) {
   const portal = listPortals().find((p) => p.id === portalId);
-  if (!portal) throw new Error(`No site called ${portalId}`);
+  if (!portal) throw new Failure('sync.unknown_site', `There is no site called ${portalId}.`);
 
-  const saved = readCredentials(portalId);
-  if (!saved) return { attempted: false, reason: 'no saved sign-in' };
+  // Handed in by a sync that already read it, so the keychain asks once.
+  const saved = known ?? readCredentials(portalId);
+  if (!saved) {
+    note('auto_sign_in.no_credentials', { portalId });
+    return {
+      attempted: false,
+      ok: false,
+      code: 'signin.no_credentials',
+      reason: 'no saved sign-in',
+    };
+  }
 
   const browser = await openBrowser(portalId);
   try {
@@ -445,18 +497,27 @@ export async function autoSignIn(portalId) {
     await new Promise((r) => setTimeout(r, 1500));
 
     const filled = await evaluate(browser, fillScript(saved.username, saved.password), sessionId);
+    note('auto_sign_in.filled', { result: filled });
     if (filled !== 'submitted') {
       await browser.close();
-      return { attempted: true, ok: false, reason: explainFailure(filled) };
+      return { attempted: true, ok: false, code: 'signin.stuck', reason: explainFailure(filled) };
     }
 
     // Let the sign-in land, then ask the same question a person would: are we
     // still looking at a password box?
     await new Promise((r) => setTimeout(r, 4000));
     const { stillAsking, landed } = JSON.parse(await evaluate(browser, INSPECT_SCRIPT, sessionId));
+    note('auto_sign_in.landed', { stillAsking, landed });
     await browser.close();
 
-    if (stillAsking) return { attempted: true, ok: false, reason: 'still asking for a password' };
+    if (stillAsking) {
+      return {
+        attempted: true,
+        ok: false,
+        code: 'signin.rejected',
+        reason: 'still asking for a password',
+      };
+    }
 
     /*
      * Where the sign-in put us IS the site.
@@ -475,12 +536,22 @@ export async function autoSignIn(portalId) {
       origin: new URL(landed).origin,
     });
     return { attempted: true, ok: true, landed };
-  } catch {
-    await browser.close().catch(() => {});
-    // The error is deliberately not passed on: it can carry the page's own
-    // text, and a rejected sign-in page is exactly where a typed password
-    // gets echoed back.
-    return { attempted: true, ok: false, reason: 'the sign-in could not be completed' };
+  } catch (error) {
+    await browser.close().catch((e) => note('browser.close_failed', { error: e.message }));
+    /*
+     * The error's own words go to the trace, never back to a caller: they can
+     * carry the page's text, and a rejected sign-in page is exactly where a
+     * typed password gets echoed back. The trace is safe because the password
+     * was registered as a secret when it was read, and is blanked there.
+     */
+    const code = error instanceof Failure ? error.code : 'internal.unexpected';
+    note('auto_sign_in.failed', { code, error: String(error?.message ?? error) });
+    return {
+      attempted: true,
+      ok: false,
+      code,
+      reason: error instanceof Failure ? error.message : CODES[code],
+    };
   }
 }
 
@@ -502,14 +573,17 @@ async function evaluate(browser, expression, sessionId) {
  * answer "what is due Friday" from `string<date>`.
  */
 export function syncPortal(portalId, options = {}) {
+  // A second caller joins the run already going; its trace says so, since
+  // the steps all belong to the first.
+  if (inFlight.has(portalId)) note('sync.joined_running', { portalId });
   return coalesce(inFlight, portalId, () => runSync(portalId, options));
 }
 
 async function runSync(portalId, { budget = 40, retried = false } = {}) {
   const config = readConfig();
-  if (!config.token) throw new Error('This computer is not linked yet.');
+  if (!config.token) throw new Failure('sync.not_linked');
   const portal = (config.portals ?? []).find((p) => p.id === portalId);
-  if (!portal) throw new Error(`No portal called ${portalId}`);
+  if (!portal) throw new Failure('sync.unknown_site', `There is no site called ${portalId}.`);
 
   /*
    * A remembered sign-in makes a dead session self-healing.
@@ -524,9 +598,14 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
    * something and it says the site needs signing into again -- a worse way to
    * learn it than never noticing at all.
    */
-  if (!portal.loggedInAt && readCredentials(portalId)) {
-    const recovered = await autoSignIn(portalId);
-    if (recovered.ok) portal.loggedInAt = new Date().toISOString();
+  // Read once per sync: each read can be a keychain prompt, and a refused one
+  // must not stop a crawl whose session still works.
+  const keychain = savedSignIn(portalId);
+  let recovery = null;
+  if (!portal.loggedInAt && keychain.creds) {
+    recovery = await autoSignIn(portalId, { saved: keychain.creds });
+    note('sync.signed_in_first', { ok: recovery.ok, code: recovery.code ?? null });
+    if (recovery.ok) portal.loggedInAt = new Date().toISOString();
   }
 
   const browser = await openBrowser(portalId);
@@ -540,20 +619,32 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
     });
     await browser.close();
 
-    await pushSnapshot(
-      { apiBase: config.apiBase ?? 'https://contextoagent.ai', token: config.token },
-      { portalId, origin: portal.origin, map, redacted: map.redacted },
-    );
+    note('sync.read', {
+      pages: map.pagesVisited,
+      complete: map.complete,
+      needsLogin: map.needsLogin,
+      loginWhy: map.loginWhy ?? null,
+    });
+    try {
+      await pushSnapshot(
+        { apiBase: config.apiBase ?? 'https://contextoagent.ai', token: config.token },
+        { portalId, origin: portal.origin, map, redacted: map.redacted },
+      );
+    } catch (error) {
+      if (error instanceof DeviceUnlinked) throw error;
+      throw new Failure('sync.push_failed', undefined, { error: String(error?.message ?? error) });
+    }
 
     /*
      * The crawl found a sign-in page. If there is a saved sign-in, use it and
      * look again -- once. Reporting an empty site when the means to fix it is
      * sitting in the keychain is the wrong answer.
      */
-    if (map.needsLogin && !retried && readCredentials(portalId)) {
+    if (map.needsLogin && !retried && keychain.creds) {
       await browser.close();
-      const recovered = await autoSignIn(portalId);
-      if (recovered.ok) return runSync(portalId, { budget, retried: true });
+      recovery = await autoSignIn(portalId, { saved: keychain.creds });
+      note('sync.signed_in_again', { ok: recovery.ok, code: recovery.code ?? null });
+      if (recovery.ok) return runSync(portalId, { budget, retried: true });
     }
 
     const components = map.pages.flatMap((p) => p.components);
@@ -566,6 +657,16 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
       needsLogin: map.needsLogin,
       syncedAt: new Date().toISOString(),
     };
+    if (map.needsLogin) {
+      result.login = {
+        why: map.loginWhy ?? null,
+        saved: Boolean(keychain.creds),
+        keychain: keychain.refused,
+        recovery: recovery
+          ? { ok: recovery.ok, code: recovery.code, reason: recovery.reason }
+          : null,
+      };
+    }
     // Clearing loggedInAt puts the portal back to offering "Sign in", which is
     // the only action that helps. Leaving it set would show a Sync button that
     // is guaranteed to fail the same way.
@@ -579,16 +680,16 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
   } catch (error) {
     // A browser left running holds a lock on the profile directory, so the
     // next sync would fail for a reason unrelated to what actually broke.
-    await browser.close().catch(() => {});
+    await browser.close().catch((e) => note('browser.close_failed', { error: e.message }));
 
     if (error instanceof DeviceUnlinked) {
       // Someone unlinked this computer from the web app. Dropping the token
       // returns the window to "Link this computer", which is the only thing
       // that helps; keeping it would retry every six hours forever.
       forgetDevice();
-    } else {
-      updatePortal(portalId, { lastError: String(error.message ?? error) });
+      throw new Failure('sync.device_unlinked');
     }
+    updatePortal(portalId, { lastError: String(error.message ?? error) });
     throw error;
   }
 }

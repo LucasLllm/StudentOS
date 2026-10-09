@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname, homedir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
+import { logEvent } from './trace-store.mjs';
 
 /**
  * Talking to the server.
@@ -36,7 +37,14 @@ export function configPath() {
 export function readConfig() {
   try {
     return JSON.parse(readFileSync(configPath(), 'utf8'));
-  } catch {
+  } catch (error) {
+    // expected: no config yet on a first run. Anything else -- a corrupted
+    // file -- is worth a line in the log, since it reads as "not linked".
+    if (error?.code !== 'ENOENT') {
+      logEvent('internal.unexpected', 'The config file could not be read.', {
+        error: String(error?.message ?? error),
+      });
+    }
     return {};
   }
 }
@@ -88,6 +96,13 @@ export class DeviceUnlinked extends Error {
   }
 }
 
+/** An error that says which HTTP status it came from, so a caller can tell "refused" from "down". */
+function withStatus(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   const response = await fetch(new URL(path, baseUrl), {
     method,
@@ -112,6 +127,7 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   try {
     parsed = text ? JSON.parse(text) : {};
   } catch {
+    // expected: not JSON. Handled just below, with the address as the clue.
     parsed = null;
   }
 
@@ -122,7 +138,8 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   if (parsed === null) {
     // Naming the address matters: the usual cause is pointing at a server
     // that does not have these routes yet, and the address is the clue.
-    throw new Error(
+    throw withStatus(
+      response.status,
       response.status === 404
         ? `${new URL(path, baseUrl).origin} has no device-linking API. ` +
             'Is CONTEXTO_API pointing at the right server, and is it up to date?'
@@ -132,7 +149,10 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(parsed.message ?? `${method} ${path} failed with ${response.status}`);
+    throw withStatus(
+      response.status,
+      parsed.message ?? `${method} ${path} failed with ${response.status}`,
+    );
   }
   return parsed;
 }
@@ -199,9 +219,12 @@ export async function sessionValid({ apiBase, sessionToken }) {
       headers: { authorization: `Bearer ${sessionToken}` },
     });
     return response.ok;
-  } catch {
+  } catch (error) {
     // Offline. Treat the session as good rather than throwing it away over a
     // dropped connection -- it may well still work once there is a network.
+    logEvent('transport.offline', 'Could not check the session; assuming it is still good.', {
+      error: String(error?.message ?? error),
+    });
     return true;
   }
 }
@@ -237,5 +260,21 @@ export async function pushSnapshot({ apiBase, token }, { portalId, origin, map, 
   return api(apiBase, '/api/devices/portal-snapshot', {
     token,
     body: { portalId, origin, redacted, capturedAt: map.exploredAt, map },
+  });
+}
+
+/** Send one trace of browser work. Re-sending the same one is harmless. */
+export async function uploadAttempt({ apiBase, token }, record) {
+  return api(apiBase, '/api/devices/attempts', { token, body: record });
+}
+
+/**
+ * Say what this machine is doing right now: null when idle, or the work that
+ * holds the browser. Lets the agent's wait end with "busy" rather than "asleep".
+ */
+export async function heartbeat({ apiBase, token }, busy) {
+  return api(apiBase, '/api/devices/heartbeat', {
+    token,
+    body: { busy: busy ?? null, version: process.env['npm_package_version'] },
   });
 }

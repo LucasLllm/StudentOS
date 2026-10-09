@@ -195,4 +195,6 @@ export interface MeProfile {
   preferredName: string;
   appearance: 'light' | 'dark' | 'system';
   hasAvatar: boolean;
+  /** Listed in DEVELOPER_EMAILS: may open the debug page. */
+  developer?: boolean;
 }

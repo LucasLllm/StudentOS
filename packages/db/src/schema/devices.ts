@@ -57,6 +57,13 @@ export const devices = pgTable(
      */
     tokenHash: text('token_hash').notNull().unique(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    /**
+     * What the app said it was doing at its last heartbeat: null when idle, or
+     * the work holding its browser. Read when the agent's wait runs out, so it
+     * can say "busy syncing Kognity" rather than "asleep".
+     */
+    state: jsonb('state'),
+    stateAt: timestamp('state_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -168,9 +175,60 @@ export const siteRefreshRequests = pgTable(
      */
     agentId: uuid('agent_id'),
     requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When a device collected it. Set but never completed means the work
+     * started and its report was lost -- a different failure from a laptop
+     * that never asked.
+     */
+    pickedUpAt: timestamp('picked_up_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     /** What the device made of it: 'synced' | 'needs_login' | 'failed'. */
     outcome: text('outcome'),
   },
   (t) => [index('site_refresh_user_idx').on(t.userId, t.portalId, t.requestedAt)],
+);
+
+/**
+ * One piece of browser work, as the device recorded it, step by step.
+ *
+ * Written by the desktop app after every attempt -- a page opened, a click, a
+ * sign-in, a sync -- so a failure can be read afterwards instead of guessed at.
+ * Only developers can read these (see routes/debug.ts). Kept fourteen days:
+ * long enough to look into a report, short enough that screenshots of a
+ * student's pages do not pile up.
+ *
+ * The id is the device's, so a trace re-sent after a dropped connection is
+ * stored once.
+ */
+export const browserAttempts = pgTable(
+  'browser_attempts',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    deviceId: uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
+    requestId: uuid('request_id').references(() => siteRefreshRequests.id, {
+      onDelete: 'set null',
+    }),
+    kind: text('kind').notNull(),
+    portalId: text('portal_id'),
+    target: text('target'),
+    /** 'ok' | 'failed' */
+    outcome: text('outcome').notNull(),
+    code: text('code'),
+    message: text('message'),
+    error: jsonb('error'),
+    detail: jsonb('detail'),
+    steps: jsonb('steps').notNull(),
+    /** A JPEG data URL of the browser at the moment it failed, or null. */
+    screenshot: text('screenshot'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('browser_attempts_user_idx').on(t.userId, t.createdAt),
+    index('browser_attempts_code_idx').on(t.code, t.createdAt),
+  ],
 );

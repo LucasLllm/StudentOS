@@ -209,3 +209,52 @@ describe('origin lock, adversarially', () => {
     expect(isInScope(candidate, PORT)).toBe(true);
   });
 });
+
+describe('a site that cannot be read', () => {
+  it('fails the sync when the first page does not load, instead of reporting an empty site', async () => {
+    const { Failure } = await import('./trace.mjs');
+    const browser = {
+      cdp: { on: () => () => {}, send: async () => ({ result: { value: '{}' } }) },
+      navigate: async () => {
+        throw new Failure('nav.dns');
+      },
+    };
+    await expect(
+      explore(browser, 'S', { origin: PORTAL, seed: PORTAL, budget: 5 }),
+    ).rejects.toMatchObject({ code: 'nav.dns' });
+  });
+
+  it('says which signal made a page look like a sign-in', async () => {
+    const { loginReason } = await import('./explorer.mjs');
+    expect(loginReason({ finalUrl: 'https://accounts.veracross.com/login' }, PORTAL)).toBe(
+      'off_origin',
+    );
+    expect(loginReason({ finalUrl: PORTAL, hasPasswordField: true }, PORTAL)).toBe(
+      'password_field',
+    );
+    expect(loginReason({ finalUrl: `${PORTAL}/grades` }, PORTAL)).toBeNull();
+  });
+});
+
+describe('readPage, when the page fails to load', () => {
+  it('removes its listeners, so they do not fire for the next page', async () => {
+    const { Failure } = await import('./trace.mjs');
+    const live = new Set();
+    const browser = {
+      cdp: {
+        on: (method) => {
+          live.add(method);
+          return () => live.delete(method);
+        },
+        send: async () => ({}),
+      },
+      navigate: async () => {
+        throw new Failure('nav.dns');
+      },
+    };
+    await expect(
+      readPage(browser, 'S', PORTAL, { origin: PORTAL, settleMs: 0 }),
+    ).rejects.toMatchObject({ code: 'nav.dns' });
+    expect([...live]).toEqual([]);
+  });
+});

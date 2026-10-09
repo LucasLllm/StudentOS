@@ -199,3 +199,74 @@ describe('describeAction', () => {
     expect(describeAction(action)).toMatch(expected);
   });
 });
+
+describe('telling the agent what really happened', () => {
+  it('does not say "signed in" when the site is waiting on a second factor', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, signIn: { status: 'second_factor' } } });
+    const result = (await actInBrowser.execute({ action: 'sign_in' }, ctx)) as {
+      signedIn?: boolean;
+      note: string;
+    };
+    expect(result.signedIn).toBe(false);
+    expect(result.note).not.toMatch(/Done: you signed in/);
+    expect(result.note).toMatch(/second step only the student can do/);
+  });
+
+  it('says signed in, and that it was checked, when it was', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, signIn: { status: 'signed_in' } } });
+    const result = (await actInBrowser.execute({ action: 'sign_in' }, ctx)) as { note: string };
+    expect(result.note).toMatch(/checked the site stopped asking/);
+  });
+
+  it('passes on why a page could not be opened', async () => {
+    const { ctx } = ctxWith({
+      awaitRefresh: async () => ({ finished: true, outcome: 'failed' }),
+      result: {
+        code: 'nav.dns',
+        reason: 'That address does not exist: its name could not be found.',
+      },
+    });
+    const result = (await browseWithAgent.execute({ url: 'https://nowhere.test/' }, ctx)) as {
+      note: string;
+    };
+    expect(result.note).toMatch(/nowhere\.test.*could not load it: That address does not exist/);
+  });
+
+  it('says why the wait ran out, instead of assuming the computer is asleep', async () => {
+    const { ctx } = ctxWith({
+      awaitRefresh: async () => ({
+        finished: false,
+        why: {
+          code: 'transport.busy',
+          message: 'Their computer is busy with another browser job -- sync of kognity.',
+        },
+      }),
+    });
+    const result = (await browseWithAgent.execute({ url: 'https://a.test/' }, ctx)) as {
+      note: string;
+    };
+    expect(result.note).toMatch(/busy with another browser job/);
+    expect(result.note).not.toMatch(/asleep/);
+  });
+});
+
+describe('a page that arrived as an error', () => {
+  it('tells the agent the site answered 404, rather than "it worked"', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, httpStatus: 404 } });
+    const result = (await browseWithAgent.execute({ url: 'https://a.test/x' }, ctx)) as {
+      note: string;
+      httpStatus?: number;
+    };
+    expect(result.httpStatus).toBe(404);
+    expect(result.note).toMatch(/HTTP 404 \(Not Found\)/);
+    expect(result.note).not.toMatch(/It worked/);
+  });
+
+  it('says nothing extra about an ordinary page', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, httpStatus: 200 } });
+    const result = (await browseWithAgent.execute({ url: 'https://a.test/' }, ctx)) as {
+      note: string;
+    };
+    expect(result.note).toMatch(/It worked/);
+  });
+});

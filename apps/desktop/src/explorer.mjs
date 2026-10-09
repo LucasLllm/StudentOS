@@ -23,6 +23,7 @@
  */
 
 import { summarizeShape } from './recorder.mjs';
+import { Failure, bound, note } from './trace.mjs';
 
 const DEFAULT_BUDGET = 40;
 
@@ -31,6 +32,7 @@ export function isInScope(candidate, origin) {
   try {
     return new URL(candidate, origin).origin === new URL(origin).origin;
   } catch {
+    // expected: not a URL, so not in scope.
     return false;
   }
 }
@@ -77,12 +79,12 @@ export async function readPage(
 
   const offRequest = cdp.on(
     'Network.requestWillBeSent',
-    (p) => methods.set(p.requestId, p.request.method),
+    bound((p) => methods.set(p.requestId, p.request.method)),
     sessionId,
   );
   const offResponse = cdp.on(
     'Network.responseReceived',
-    (p) => {
+    bound((p) => {
       if (!/json/i.test(p.response.mimeType)) return;
       // Origin lock applies to what we RECORD as well as where we navigate,
       // so third-party telemetry never enters the map.
@@ -92,12 +94,14 @@ export async function readPage(
         status: p.response.status,
         method: methods.get(p.requestId) ?? 'GET',
       });
-    },
+    }),
     sessionId,
   );
   const offFinished = cdp.on(
     'Network.loadingFinished',
-    async (p) => {
+    // Bound: the protocol fires these from its own loop, and the note below
+    // belongs to the sync that is listening.
+    bound(async (p) => {
       const meta = inflight.get(p.requestId);
       if (!meta) return;
       inflight.delete(p.requestId);
@@ -114,18 +118,36 @@ export async function readPage(
           shape: summarizeShape(parsed, { raw }),
           empty: isEmpty(parsed),
         });
-      } catch {
+      } catch (error) {
+        // Not JSON, or the body was already gone. Kept as a component with no
+        // shape, and the reason noted, so an empty sync can be explained.
+        note('explore.unreadable_response', {
+          url: meta.url,
+          error: String(error?.message ?? error),
+        });
         components.push({ ...meta, shape: null, empty: null });
       }
-    },
+    }),
     sessionId,
   );
 
+  // In a finally: a page that fails to load throws, and listeners left behind
+  // would fire for every later page of the sync.
+  try {
+    return await readLoadedPage(browser, cdp, sessionId, url, settleMs, components);
+  } finally {
+    offRequest();
+    offResponse();
+    offFinished();
+  }
+}
+
+async function readLoadedPage(browser, cdp, sessionId, url, settleMs, components) {
   await browser.navigate(url, sessionId);
   // Components load after the load event, so give the XHRs a moment to land.
   await new Promise((r) => setTimeout(r, settleMs));
 
-  const { result } = await cdp.send(
+  const { result, exceptionDetails } = await cdp.send(
     'Runtime.evaluate',
     {
       expression: `JSON.stringify({
@@ -142,10 +164,12 @@ export async function readPage(
     sessionId,
   );
 
-  offRequest();
-  offResponse();
-  offFinished();
-
+  if (exceptionDetails) {
+    throw new Failure('page.script_failed', undefined, {
+      url,
+      description: exceptionDetails.exception?.description ?? exceptionDetails.text ?? null,
+    });
+  }
   const page = JSON.parse(result.value);
   return {
     url,
@@ -171,8 +195,13 @@ export async function readPage(
  * origin, some render a login form in place at the same address.
  */
 export function looksLikeLogin(page, origin) {
-  if (page.finalUrl && !isInScope(page.finalUrl, origin)) return true;
-  return Boolean(page.hasPasswordField);
+  return loginReason(page, origin) !== null;
+}
+
+/** Which of the two signals it was, so a sign-in prompt can be explained. */
+export function loginReason(page, origin) {
+  if (page.finalUrl && !isInScope(page.finalUrl, origin)) return 'off_origin';
+  return page.hasPasswordField ? 'password_field' : null;
 }
 
 /** True when a payload carries structure but no rows -- an out-of-term portal. */
@@ -203,6 +232,7 @@ export async function explore(
   const skipped = [];
 
   let needsLogin = false;
+  let loginWhy = null;
 
   while (queue.length > 0 && pages.length < budget) {
     const url = queue.shift();
@@ -210,7 +240,16 @@ export async function explore(
     try {
       page = await readPage(browser, sessionId, url, { origin, raw });
     } catch (error) {
-      skipped.push({ url, reason: error.message });
+      /*
+       * The first page failing is the site failing, not one page of it: a
+       * sync that carried on would report an empty site that read fine.
+       */
+      if (pages.length === 0 && skipped.length === 0) {
+        if (error instanceof Failure) throw error;
+        throw new Failure('nav.failed', undefined, { url, error: String(error?.message ?? error) });
+      }
+      note('explore.skipped', { url, code: error?.code ?? null, error: error.message });
+      skipped.push({ url, reason: error.message, code: error?.code ?? null });
       continue;
     }
 
@@ -219,6 +258,8 @@ export async function explore(
     // the budget and the school's bandwidth to learn nothing new.
     if (pages.length === 0 && looksLikeLogin(page, origin)) {
       needsLogin = true;
+      loginWhy = loginReason(page, origin);
+      note('explore.login_page', { why: loginWhy, finalUrl: page.finalUrl });
       break;
     }
     /*
@@ -250,6 +291,7 @@ export async function explore(
     complete: queue.length === 0 && !needsLogin,
     /** The session expired. Distinct from a portal that is merely empty. */
     needsLogin,
+    loginWhy,
     pagesVisited: pages.length,
     pagesRemaining: queue.length,
     budget,

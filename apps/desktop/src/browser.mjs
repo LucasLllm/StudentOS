@@ -4,6 +4,8 @@ import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { CdpConnection } from './cdp.mjs';
 import { findBrowser } from './chrome.mjs';
+import { codeForNetErrorName } from './load-wait.mjs';
+import { Failure, note } from './trace.mjs';
 
 /**
  * Launching and holding a browser the student is logged into.
@@ -187,8 +189,19 @@ export class PortalBrowser {
         sessionId,
       );
     });
-    await this.cdp.send('Page.navigate', { url }, sessionId);
-    return Promise.race([loaded, new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+    note('nav.start', { url });
+    // Chrome answers a navigation that cannot start -- no such host, a bad
+    // certificate -- with errorText, and the load event then never comes.
+    const { errorText } = await this.cdp.send('Page.navigate', { url }, sessionId);
+    const code = errorText ? codeForNetErrorName(errorText) : null;
+    if (code) throw new Failure(code, undefined, { url, errorText });
+    if (errorText) note('nav.aborted', { url, errorText });
+    const done = await Promise.race([
+      loaded,
+      new Promise((r) => setTimeout(() => r(false), timeoutMs)),
+    ]);
+    if (!done) note('nav.timeout', { url, afterMs: timeoutMs });
+    return done;
   }
 
   async currentUrl(sessionId) {
@@ -225,13 +238,17 @@ export class PortalBrowser {
        */
       const { targetInfos } = await this.cdp.send('Target.getTargets');
       for (const target of targetInfos.filter((t) => t.type === 'page')) {
-        await this.cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {});
+        await this.cdp
+          .send('Target.closeTarget', { targetId: target.targetId })
+          .catch((error) => note('browser.tab_close_failed', { error: error.message }));
       }
 
       // Ask Chrome to shut down so it flushes cookies to the profile. Killing
       // the process loses the session the student just logged in to create.
       await this.cdp.send('Browser.close');
-    } catch {
+    } catch (error) {
+      // Chrome would not close itself; the cookies from this run may be lost.
+      note('browser.close_refused', { error: String(error?.message ?? error) });
       this.process.kill();
     }
     await Promise.race([dead, new Promise((r) => setTimeout(r, 5000))]);

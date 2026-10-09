@@ -75,6 +75,7 @@ function isExecutable(path) {
     accessSync(path, constants.X_OK);
     return true;
   } catch {
+    // expected: not there, or not executable -- the next candidate is tried.
     return false;
   }
 }
@@ -83,6 +84,7 @@ function whichSync(binary) {
   try {
     return execFileSync('which', [binary], { encoding: 'utf8' }).trim() || null;
   } catch {
+    // expected: `which` exits non-zero when the binary is not on PATH.
     return null;
   }
 }

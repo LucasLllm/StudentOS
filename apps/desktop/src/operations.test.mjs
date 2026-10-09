@@ -260,3 +260,21 @@ describe('oneAtATime', () => {
     expect(await gate(async () => {})).toBe(true);
   });
 });
+
+describe('oneAtATime().current', () => {
+  it('says what holds the browser, and nothing once it is free', async () => {
+    const { oneAtATime } = await import('./operations.mjs');
+    const gate = oneAtATime();
+    expect(gate.current()).toBeNull();
+    let release;
+    const running = gate(() => new Promise((r) => (release = r)), {
+      kind: 'sync',
+      portalId: 'kognity',
+    });
+    expect(gate.current()).toMatchObject({ kind: 'sync', portalId: 'kognity' });
+    expect(Date.parse(gate.current().since)).not.toBeNaN();
+    release();
+    await running;
+    expect(gate.current()).toBeNull();
+  });
+});
