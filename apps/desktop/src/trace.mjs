@@ -115,6 +115,7 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
     value = await store.run(current, fn);
     record.outcome = 'ok';
   } catch (error) {
+    // expected: this is the recorder itself -- the error becomes the outcome.
     record.outcome = 'failed';
     if (error instanceof Failure) {
       record.code = error.code;
@@ -145,7 +146,7 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
   try {
     sink?.(clean);
   } catch (error) {
-    // The outcome stands whatever happens to its record; losing a trace must
+    // expected: a sink that cannot keep a record. The outcome stands whatever happens to its record; losing a trace must
     // not turn a page that opened into one that did not.
     console.error('Could not keep a trace record:', error);
   }

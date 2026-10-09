@@ -2,9 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { zValidator } from '@hono/zod-validator';
-import { and, desc, eq, gt, isNotNull, isNull, lt, ne, notInArray } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  browserAttempts,
   deviceLinkRequests,
   devices,
   disabledSites,
@@ -42,6 +43,32 @@ const REFRESH_TTL_MS = 60 * 60 * 1000;
  * do not control -- could otherwise push until the API runs out of memory.
  */
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Ceiling on one trace. Steps are small; the screenshot is the bulk of it, a
+ * half-scale JPEG of one browser view, comfortably under a megabyte.
+ */
+const MAX_ATTEMPT_BYTES = 2 * 1024 * 1024;
+
+/** How long traces are kept. Long enough to look into a report, no longer. */
+const ATTEMPT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+const attemptSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.string().min(1).max(40),
+  requestId: z.string().uuid().nullable().optional(),
+  portalId: z.string().max(200).nullable().optional(),
+  target: z.string().max(4000).nullable().optional(),
+  outcome: z.enum(['ok', 'failed']),
+  code: z.string().max(80).nullable().optional(),
+  message: z.string().max(4000).nullable().optional(),
+  error: z.unknown().optional(),
+  detail: z.unknown().optional(),
+  steps: z.array(z.unknown()).max(2000),
+  screenshot: z.string().startsWith('data:image/').nullable().optional(),
+  startedAt: z.string().datetime(),
+  endedAt: z.string().datetime(),
+});
 
 /**
  * Linking a desktop companion, and receiving what it finds.
@@ -313,8 +340,127 @@ export function createDeviceRoutes(ctx: AppContext) {
           )
           .orderBy(siteRefreshRequests.requestedAt);
 
+        /*
+         * Collected, so a wait that runs out later can tell "the laptop never
+         * asked" from "it started and its report was lost".
+         */
+        const fresh = rows.map((r) => r.id);
+        if (fresh.length > 0) {
+          await ctx.db
+            .update(siteRefreshRequests)
+            .set({ pickedUpAt: new Date() })
+            .where(
+              and(inArray(siteRefreshRequests.id, fresh), isNull(siteRefreshRequests.pickedUpAt)),
+            );
+        }
+
         return c.json(rows);
       })
+
+      /**
+       * What the app is doing right now, every few seconds.
+       *
+       * Sent outside the lock that lets one browser run at a time, so a
+       * laptop busy with a long sync still says so -- which is what lets the
+       * agent tell a student "it is busy syncing Kognity" instead of "asleep".
+       */
+      .post(
+        '/heartbeat',
+        device,
+        zValidator(
+          'json',
+          z.object({
+            busy: z
+              .object({
+                kind: z.string().max(40),
+                portalId: z.string().max(200).nullable().optional(),
+                since: z.string().datetime(),
+              })
+              .nullable(),
+            version: z.string().max(40).optional(),
+          }),
+        ),
+        async (c) => {
+          const body = c.req.valid('json');
+          await ctx.db
+            .update(devices)
+            .set({ state: { busy: body.busy }, stateAt: new Date() })
+            .where(eq(devices.id, c.get('deviceId')));
+          return c.json({ ok: true });
+        },
+      )
+
+      /**
+       * One trace of browser work, sent by the app after it finished.
+       *
+       * Idempotent on the device's own id, because the app re-sends anything
+       * it is not sure arrived. A request id is only kept when it is this
+       * student's own -- a device naming another student's request must not be
+       * able to attach its trace to it.
+       */
+      .post(
+        '/attempts',
+        device,
+        bodyLimit({
+          maxSize: MAX_ATTEMPT_BYTES,
+          onError: () => {
+            throw new ContextoError('validation_failed', 'That trace is too large to keep.');
+          },
+        }),
+        zValidator('json', attemptSchema),
+        async (c) => {
+          const body = c.req.valid('json');
+          const userId = c.get('userId');
+
+          let requestId: string | null = null;
+          if (body.requestId) {
+            const [own] = await ctx.db
+              .select({ id: siteRefreshRequests.id })
+              .from(siteRefreshRequests)
+              .where(
+                and(
+                  eq(siteRefreshRequests.id, body.requestId),
+                  eq(siteRefreshRequests.userId, userId),
+                ),
+              )
+              .limit(1);
+            requestId = own?.id ?? null;
+          }
+
+          await ctx.db
+            .insert(browserAttempts)
+            .values({
+              id: body.id,
+              userId,
+              deviceId: c.get('deviceId'),
+              requestId,
+              kind: body.kind,
+              portalId: body.portalId ?? null,
+              target: body.target ?? null,
+              outcome: body.outcome,
+              code: body.code ?? null,
+              message: body.message ?? null,
+              error: body.error ?? null,
+              detail: body.detail ?? null,
+              steps: body.steps,
+              screenshot: body.screenshot ?? null,
+              startedAt: new Date(body.startedAt),
+              endedAt: new Date(body.endedAt),
+            })
+            .onConflictDoNothing({ target: browserAttempts.id });
+
+          // Swept here rather than by a job: this is the only writer.
+          await ctx.db
+            .delete(browserAttempts)
+            .where(
+              and(
+                eq(browserAttempts.userId, userId),
+                lt(browserAttempts.createdAt, new Date(Date.now() - ATTEMPT_TTL_MS)),
+              ),
+            );
+          return c.json({ ok: true });
+        },
+      )
 
       /** The device reporting back on one of them. */
       .post(

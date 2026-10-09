@@ -311,3 +311,41 @@ describe('openInBrowser', () => {
     }
   });
 });
+
+describe('uploadAttempt and heartbeat', () => {
+  const capture = () => {
+    const calls = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return { ok: true, status: 200, text: async () => '{"ok":true}' };
+    };
+    return { calls, restore: () => (globalThis.fetch = original) };
+  };
+
+  it('sends a trace to the attempts route with the device token', async () => {
+    const { uploadAttempt } = await import('./sync.mjs');
+    const { calls, restore } = capture();
+    try {
+      await uploadAttempt({ apiBase: 'https://api.test', token: 't' }, { id: 'a', steps: [] });
+    } finally {
+      restore();
+    }
+    expect(calls[0].url).toBe('https://api.test/api/devices/attempts');
+    expect(calls[0].init.headers.authorization).toBe('Bearer t');
+    expect(JSON.parse(calls[0].init.body)).toEqual({ id: 'a', steps: [] });
+  });
+
+  it('sends what the app is busy with', async () => {
+    const { heartbeat } = await import('./sync.mjs');
+    const { calls, restore } = capture();
+    const busy = { kind: 'sync', portalId: 'k', since: '2026-10-09T12:00:00.000Z' };
+    try {
+      await heartbeat({ apiBase: 'https://api.test', token: 't' }, busy);
+    } finally {
+      restore();
+    }
+    expect(calls[0].url).toBe('https://api.test/api/devices/heartbeat');
+    expect(JSON.parse(calls[0].init.body)).toMatchObject({ busy });
+  });
+});

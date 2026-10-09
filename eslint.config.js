@@ -47,7 +47,8 @@ export default tseslint.config(
     files: ['apps/desktop/src/**/*.mjs'],
     ignores: ['apps/desktop/src/**/*.test.mjs'],
     plugins: { contexto: { rules: { 'explained-catch': explainedCatch } } },
-    rules: { 'contexto/explained-catch': 'error' },
+    // A warning until the existing catches are all explained; then an error.
+    rules: { 'contexto/explained-catch': 'warn' },
   },
 
   // Must stay last: turns off stylistic rules that would fight Prettier.

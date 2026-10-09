@@ -239,3 +239,19 @@ export async function pushSnapshot({ apiBase, token }, { portalId, origin, map, 
     body: { portalId, origin, redacted, capturedAt: map.exploredAt, map },
   });
 }
+
+/** Send one trace of browser work. Re-sending the same one is harmless. */
+export async function uploadAttempt({ apiBase, token }, record) {
+  return api(apiBase, '/api/devices/attempts', { token, body: record });
+}
+
+/**
+ * Say what this machine is doing right now: null when idle, or the work that
+ * holds the browser. Lets the agent's wait end with "busy" rather than "asleep".
+ */
+export async function heartbeat({ apiBase, token }, busy) {
+  return api(apiBase, '/api/devices/heartbeat', {
+    token,
+    body: { busy: busy ?? null, version: process.env['npm_package_version'] },
+  });
+}

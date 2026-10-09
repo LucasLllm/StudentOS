@@ -5,7 +5,14 @@ import { handleError } from '../errors.js';
 import { createRoutes } from './index.js';
 import type { AppContext } from '../context.js';
 import { and, desc, eq } from 'drizzle-orm';
-import { deviceLinkRequests, portalSnapshots } from '@contexto/db';
+import { randomUUID } from 'node:crypto';
+import {
+  browserAttempts,
+  deviceLinkRequests,
+  devices,
+  portalSnapshots,
+  siteRefreshRequests,
+} from '@contexto/db';
 import { resetRateLimits } from '../middleware/rate-limit.js';
 import { createUser, reset, testDb, TEST_DATABASE_URL } from '../test-support/harness.js';
 
@@ -572,5 +579,90 @@ describe('site icons', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('browser attempts', () => {
+  const attempt = (overrides: Record<string, unknown> = {}) => ({
+    id: randomUUID(),
+    kind: 'browse',
+    requestId: null,
+    portalId: null,
+    target: 'https://a.test/',
+    startedAt: '2026-10-09T12:00:00.000Z',
+    endedAt: '2026-10-09T12:00:02.000Z',
+    outcome: 'failed',
+    code: 'nav.dns',
+    message: 'That address does not exist.',
+    steps: [{ t: 0, name: 'navigate', detail: { url: 'https://a.test/' } }],
+    ...overrides,
+  });
+
+  it('stores an attempt against the device’s own student, once', async () => {
+    const alice = await createUser();
+    const device = await linkDevice(alice.token);
+    const body = attempt();
+    expect((await app.request('/api/devices/attempts', json(body, device.token))).status).toBe(200);
+    expect((await app.request('/api/devices/attempts', json(body, device.token))).status).toBe(200);
+
+    const rows = await db.select().from(browserAttempts).where(eq(browserAttempts.id, body.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ userId: alice.id, deviceId: device.deviceId, code: 'nav.dns' });
+  });
+
+  it('drops a request id that belongs to another student', async () => {
+    const alice = await createUser();
+    const bob = await createUser();
+    const [bobsRequest] = await db
+      .insert(siteRefreshRequests)
+      .values({ userId: bob.id, portalId: 'x' })
+      .returning({ id: siteRefreshRequests.id });
+    const device = await linkDevice(alice.token);
+    const body = attempt({ requestId: bobsRequest!.id });
+    await app.request('/api/devices/attempts', json(body, device.token));
+    const [row] = await db.select().from(browserAttempts).where(eq(browserAttempts.id, body.id));
+    expect(row!.requestId).toBeNull();
+  });
+
+  it('refuses an attempt too large to keep', async () => {
+    const alice = await createUser();
+    const device = await linkDevice(alice.token);
+    const body = attempt({ screenshot: 'data:image/jpeg;base64,' + 'A'.repeat(3 * 1024 * 1024) });
+    const res = await app.request('/api/devices/attempts', json(body, device.token));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('refuses an attempt from no device', async () => {
+    const res = await app.request('/api/devices/attempts', json(attempt()));
+    expect(res.status).toBe(401);
+  });
+
+  it('marks work as picked up when a device collects it', async () => {
+    const alice = await createUser();
+    const device = await linkDevice(alice.token);
+    const [request] = await db
+      .insert(siteRefreshRequests)
+      .values({ userId: alice.id, portalId: 'kognity' })
+      .returning({ id: siteRefreshRequests.id });
+    await app.request('/api/devices/pending', as(device.token));
+    const [row] = await db
+      .select({ pickedUpAt: siteRefreshRequests.pickedUpAt })
+      .from(siteRefreshRequests)
+      .where(eq(siteRefreshRequests.id, request!.id));
+    expect(row!.pickedUpAt).toBeInstanceOf(Date);
+  });
+
+  it('records what the device says it is busy with', async () => {
+    const alice = await createUser();
+    const device = await linkDevice(alice.token);
+    const busy = { kind: 'sync', portalId: 'kognity', since: '2026-10-09T12:00:00.000Z' };
+    const res = await app.request('/api/devices/heartbeat', json({ busy }, device.token));
+    expect(res.status).toBe(200);
+    const [row] = await db
+      .select({ state: devices.state, stateAt: devices.stateAt })
+      .from(devices)
+      .where(eq(devices.id, device.deviceId));
+    expect(row!.state).toEqual({ busy });
+    expect(row!.stateAt).toBeInstanceOf(Date);
   });
 });

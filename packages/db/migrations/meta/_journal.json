@@ -148,6 +148,13 @@
       "when": 1790212253491,
       "tag": "0020_projects",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791551158435,
+      "tag": "0021_browser_attempts",
+      "breakpoints": true
     }
   ]
 }
