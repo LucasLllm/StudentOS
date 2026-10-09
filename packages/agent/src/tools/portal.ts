@@ -223,21 +223,35 @@ export const refreshSchoolPortal: Tool<z.infer<typeof refreshInput>, unknown> = 
       return {
         finished: false,
         note:
-          `Their computer has not reported back on ${portalId} yet. It is most likely asleep or ` +
-          'shut. Tell them plainly that it needs to be awake for you to read that site, and ' +
-          'answer now from whatever you already have.',
+          (waited.why
+            ? `Their computer has not finished ${portalId}: ${waited.why.message}`
+            : `Their computer has not reported back on ${portalId} yet. It is most likely ` +
+              'asleep or shut.') +
+          ' Tell them that plainly, and answer now from whatever you already have.',
       };
     }
+
+    /*
+     * The computer says why, in its own words -- which are this app's words,
+     * never a page's: whether a sign-in was saved at all, and what happened
+     * when it was tried.
+     */
+    const failure = waited.outcome === 'synced' ? null : await ctx.portals.resultOf(requestId!);
+    const reason =
+      failure && typeof (failure as { reason?: unknown }).reason === 'string'
+        ? (failure as { reason: string }).reason.slice(0, 600)
+        : '';
 
     if (waited.outcome === 'needs_login') {
       return {
         finished: true,
         signedIn: false,
         note:
-          `Their computer tried ${portalId} and the site would not accept the saved sign-in. ` +
-          'Say so directly. They can fix it in the Contexto Agent app under Settings, ' +
-          'Connections, Sites. Do not tell them to sign in by hand elsewhere -- there is no ' +
-          'such thing here.',
+          `Their computer tried ${portalId} and it needs signing into` +
+          (reason ? `: ${reason}` : '.') +
+          ' Say so directly. They can save or fix the sign-in in the Contexto Agent app under ' +
+          'Settings, Connections, Sites. Do not tell them to sign in by hand elsewhere -- ' +
+          'there is no such thing here.',
       };
     }
 
@@ -245,7 +259,10 @@ export const refreshSchoolPortal: Tool<z.infer<typeof refreshInput>, unknown> = 
       return {
         finished: true,
         signedIn: false,
-        note: `Their computer could not read ${portalId} just now. Say so and offer to try again.`,
+        note:
+          `Their computer could not read ${portalId} just now` +
+          (reason ? `: ${reason}` : '.') +
+          ' Say so and offer to try again.',
       };
     }
 

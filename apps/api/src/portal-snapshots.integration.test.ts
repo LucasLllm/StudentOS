@@ -14,6 +14,8 @@ import type { AppContext } from './context.js';
 import { resetRateLimits } from './middleware/rate-limit.js';
 import { createUser, reset, testDb, TEST_DATABASE_URL } from './test-support/harness.js';
 import realMap from './test-support/portal-map.fixture.json' with { type: 'json' };
+import { eq } from 'drizzle-orm';
+import { devices, siteRefreshRequests } from '@contexto/db';
 
 /**
  * The whole round trip, on output a real crawl actually produced.
@@ -71,7 +73,7 @@ async function linkedDevice(userToken: string) {
   const { requestId } = (await start.json()) as { requestId: string };
   await app.request(`/api/devices/link/${requestId}/approve`, post({}, userToken));
   const claim = await app.request(`/api/devices/link/${requestId}/claim`, { method: 'POST' });
-  return (await claim.json()) as { token: string };
+  return (await claim.json()) as { token: string; deviceId: string };
 }
 
 async function pushRealMap(deviceToken: string) {
@@ -282,7 +284,11 @@ describe('removing a site', () => {
 
 describe('the agent asking a computer to look again', () => {
   /** Stand in for the desktop app: collect the work and report an outcome. */
-  async function actAsDevice(deviceToken: string, outcome: 'synced' | 'needs_login' | 'failed') {
+  async function actAsDevice(
+    deviceToken: string,
+    outcome: 'synced' | 'needs_login' | 'failed',
+    result?: unknown,
+  ) {
     for (let i = 0; i < 40; i += 1) {
       const work = (await (
         await app.request('/api/devices/pending', {
@@ -292,7 +298,7 @@ describe('the agent asking a computer to look again', () => {
       if (work.length > 0) {
         await app.request(
           `/api/devices/pending/${work[0]!.id}/complete`,
-          post({ outcome }, deviceToken),
+          post({ outcome, result }, deviceToken),
         );
         return true;
       }
@@ -343,11 +349,19 @@ describe('the agent asking a computer to look again', () => {
     } as unknown as ToolContext;
 
     const running = refreshSchoolPortal.execute({ portalId: 'veracross' }, ctx);
-    await actAsDevice(device.token, 'needs_login');
+    // What the computer actually found, in its own words -- here, that nothing
+    // was saved. The old note claimed the site "would not accept the saved
+    // sign-in" whatever had happened, including when there was none.
+    await actAsDevice(device.token, 'needs_login', {
+      code: 'sync.needs_login',
+      reason:
+        'The site showed a password box, and there is no saved sign-in for it on this computer.',
+    });
 
     const result = (await running) as { finished: boolean; signedIn: boolean; note: string };
     expect(result.signedIn).toBe(false);
-    expect(result.note).toMatch(/would not accept the saved sign-in/i);
+    expect(result.note).toMatch(/no saved sign-in for it on this computer/i);
+    expect(result.note).not.toMatch(/would not accept/i);
     expect(result.note).toMatch(/no such thing here/i);
   });
 
@@ -508,7 +522,8 @@ describe('the agent browsing anything', () => {
       note: string;
     };
     expect(result.finished).toBe(false);
-    expect(result.note).toMatch(/asleep or shut/i);
+    // Linked, but it has never once asked for work: not in touch, said as such.
+    expect(result.note).toMatch(/never been in touch/i);
   });
 
   it('hands an action to the device with what to do on the page', async () => {
@@ -542,5 +557,78 @@ describe('the agent browsing anything', () => {
       })
     ).json()) as unknown[];
     expect(work).toEqual([]);
+  });
+});
+
+/**
+ * When the wait runs out, why.
+ *
+ * "Their computer is asleep" was the only answer, and it was often wrong: the
+ * laptop was busy with a long sync, or it did the work and the report got lost.
+ * Each of these is a different thing to tell a student.
+ */
+describe('a wait that runs out', () => {
+  async function request(userId: string) {
+    const [row] = await db
+      .insert(siteRefreshRequests)
+      .values({ userId, portalId: '', kind: 'browse', targetUrl: 'https://a.test/' })
+      .returning({ id: siteRefreshRequests.id });
+    return row!.id;
+  }
+  const wait = (id: string) => new DbPortalSnapshots(db).awaitRefresh(id, 50);
+
+  it('says no computer is linked when none is', async () => {
+    const alice = await createUser();
+    const waited = await wait(await request(alice.id));
+    expect(waited).toMatchObject({ finished: false, why: { code: 'transport.no_device' } });
+  });
+
+  it('says the computer is offline, and since when, when it has gone quiet', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    await db
+      .update(devices)
+      .set({ lastSeenAt: new Date(Date.now() - 5 * 60_000) })
+      .where(eq(devices.id, device.deviceId));
+    const waited = await wait(await request(alice.id));
+    expect(waited.why).toMatchObject({ code: 'transport.offline' });
+    expect(waited.why?.message).toMatch(/5 minutes ago/);
+  });
+
+  it('says what the computer is busy with', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    await db
+      .update(devices)
+      .set({
+        lastSeenAt: new Date(),
+        state: { busy: { kind: 'sync', portalId: 'kognity', since: new Date().toISOString() } },
+        stateAt: new Date(),
+      })
+      .where(eq(devices.id, device.deviceId));
+    const waited = await wait(await request(alice.id));
+    expect(waited.why).toMatchObject({ code: 'transport.busy' });
+    expect(waited.why?.message).toMatch(/kognity/);
+  });
+
+  it('says the work started and was never reported, when it was collected', async () => {
+    const alice = await createUser();
+    await linkedDevice(alice.token);
+    const id = await request(alice.id);
+    await db
+      .update(siteRefreshRequests)
+      .set({ pickedUpAt: new Date() })
+      .where(eq(siteRefreshRequests.id, id));
+    const waited = await wait(id);
+    expect(waited.why).toMatchObject({ code: 'transport.no_report' });
+  });
+
+  it('calls an idle, online computer that never collected the work a bug', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    // In touch a moment ago, and idle.
+    await db.update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, device.deviceId));
+    const waited = await wait(await request(alice.id));
+    expect(waited.why).toMatchObject({ code: 'transport.not_picked_up' });
   });
 });
