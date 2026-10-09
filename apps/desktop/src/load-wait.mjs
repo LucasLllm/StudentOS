@@ -28,6 +28,22 @@ export function codeForNetError(error) {
   return 'nav.failed';
 }
 
+/**
+ * The same, from the name Chrome's protocol gives (Page.navigate's errorText).
+ * Null for ERR_ABORTED, which is a load being replaced rather than failing.
+ */
+export function codeForNetErrorName(name) {
+  const n = String(name ?? '').replace(/^net::/, '');
+  if (n === 'ERR_ABORTED') return null;
+  if (n === 'ERR_NAME_NOT_RESOLVED' || n === 'ERR_NAME_RESOLUTION_FAILED') return 'nav.dns';
+  if (n === 'ERR_INTERNET_DISCONNECTED') return 'nav.offline';
+  if (n === 'ERR_TIMED_OUT') return 'nav.timeout';
+  if (/^ERR_CERT_|^ERR_SSL_/.test(n)) return 'nav.cert';
+  if (/^ERR_BLOCKED_|^ERR_DISALLOWED_/.test(n)) return 'nav.blocked';
+  if (/^ERR_(CONNECTION|ADDRESS|NETWORK|TUNNEL|PROXY)_/.test(n)) return 'nav.connection';
+  return 'nav.failed';
+}
+
 /** ERR_ABORTED: the load was replaced -- a redirect, or a download -- not a failure. */
 const ABORTED = -3;
 

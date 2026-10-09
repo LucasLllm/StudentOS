@@ -249,3 +249,24 @@ describe('telling the agent what really happened', () => {
     expect(result.note).not.toMatch(/asleep/);
   });
 });
+
+describe('a page that arrived as an error', () => {
+  it('tells the agent the site answered 404, rather than "it worked"', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, httpStatus: 404 } });
+    const result = (await browseWithAgent.execute({ url: 'https://a.test/x' }, ctx)) as {
+      note: string;
+      httpStatus?: number;
+    };
+    expect(result.httpStatus).toBe(404);
+    expect(result.note).toMatch(/HTTP 404 \(Not Found\)/);
+    expect(result.note).not.toMatch(/It worked/);
+  });
+
+  it('says nothing extra about an ordinary page', async () => {
+    const { ctx } = ctxWith({ result: { ...PAGE, httpStatus: 200 } });
+    const result = (await browseWithAgent.execute({ url: 'https://a.test/' }, ctx)) as {
+      note: string;
+    };
+    expect(result.note).toMatch(/It worked/);
+  });
+});

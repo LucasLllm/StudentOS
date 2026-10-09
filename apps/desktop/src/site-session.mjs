@@ -158,8 +158,8 @@ export class SiteSession {
 
   /** Matches the shape the explorer already calls. */
   async openPage(url) {
-    await this.navigate(url);
-    return { sessionId: null };
+    const load = await this.navigate(url);
+    return { sessionId: null, load };
   }
 
   /**

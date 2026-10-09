@@ -380,14 +380,23 @@ export async function browsePage(url) {
   const browser = same ? resumeBrowser(open) : await openBrowser(label);
   current = browser.view ? browser : null;
   try {
-    await browser.openPage(target.toString());
+    const { load } = await browser.openPage(target.toString());
     // Give a page that builds itself a moment to do so.
     await new Promise((r) => setTimeout(r, 2500));
-    const read = await evaluate(browser, SNAPSHOT_SCRIPT);
-    rememberFlow(JSON.parse(read).url);
+    const read = JSON.parse(await evaluate(browser, SNAPSHOT_SCRIPT));
+    rememberFlow(read.url);
     await reportFrame(browser);
     await browser.close();
-    return JSON.parse(read);
+    /*
+     * How the load went travels with the page. A site's "Not Found" page is
+     * still a page, and readable -- but an agent told only "here is the page"
+     * reads a 404 as the answer it was looking for.
+     */
+    return {
+      ...read,
+      ...(typeof load?.status === 'number' ? { httpStatus: load.status } : {}),
+      ...(load?.timedOut ? { stillLoading: true } : {}),
+    };
   } catch (error) {
     await browser.close().catch((e) => note('browser.close_failed', { error: e.message }));
     throw error;

@@ -190,3 +190,18 @@ describe('where profiles are written', () => {
     }
   });
 });
+
+describe('PortalBrowser.navigate', () => {
+  it('throws the right code when Chrome says the navigation failed', async () => {
+    const { PortalBrowser } = await import('./browser.mjs');
+    const browser = new PortalBrowser({ portalId: 'x', mode: 'drive' });
+    browser.cdp = {
+      on: () => () => {},
+      send: async () => ({ errorText: 'net::ERR_NAME_NOT_RESOLVED' }),
+    };
+    await expect(browser.navigate('https://nowhere.test/', 'S')).rejects.toMatchObject({
+      code: 'nav.dns',
+      detail: { errorText: 'net::ERR_NAME_NOT_RESOLVED' },
+    });
+  });
+});

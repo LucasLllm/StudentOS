@@ -123,3 +123,20 @@ describe('events Electron fires from outside the attempt', () => {
     expect(record.steps.map((s) => s.name)).toEqual(['nav.response', 'nav.aborted']);
   });
 });
+
+describe('codeForNetErrorName', () => {
+  it.each([
+    ['net::ERR_NAME_NOT_RESOLVED', 'nav.dns'],
+    ['net::ERR_INTERNET_DISCONNECTED', 'nav.offline'],
+    ['net::ERR_CONNECTION_REFUSED', 'nav.connection'],
+    ['net::ERR_ADDRESS_UNREACHABLE', 'nav.connection'],
+    ['net::ERR_CERT_DATE_INVALID', 'nav.cert'],
+    ['net::ERR_BLOCKED_BY_ADMINISTRATOR', 'nav.blocked'],
+    ['net::ERR_TIMED_OUT', 'nav.timeout'],
+    ['net::ERR_ABORTED', null],
+    ['net::ERR_SOMETHING_NEW', 'nav.failed'],
+  ])('maps %s to %s', async (name, code) => {
+    const { codeForNetErrorName } = await import('./load-wait.mjs');
+    expect(codeForNetErrorName(name)).toBe(code);
+  });
+});

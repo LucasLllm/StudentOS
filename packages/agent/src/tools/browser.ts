@@ -61,7 +61,42 @@ interface PageReading {
   title?: string;
   text?: string;
   elements?: unknown;
+  /** The HTTP status the page arrived with, when the computer knows it. */
+  httpStatus?: number;
+  /** It was still loading when the computer gave up waiting and read it. */
+  stillLoading?: boolean;
 }
+
+/**
+ * What the agent must know about how the page arrived before it reads it: a
+ * "Not Found" or an error page is the site's answer, not the content asked for.
+ */
+export function loadNote(page: PageReading | null): string {
+  const notes: string[] = [];
+  const status = page?.httpStatus;
+  if (typeof status === 'number' && status >= 400) {
+    notes.push(
+      `The site answered HTTP ${status}${HTTP_WORDS[status] ? ` (${HTTP_WORDS[status]})` : ''}: ` +
+        'what follows is its error page, not the content you asked for. Say so.',
+    );
+  }
+  if (page?.stillLoading) {
+    notes.push('The page was still loading after 30 seconds; it may be incomplete.');
+  }
+  return notes.join(' ');
+}
+
+const HTTP_WORDS: Record<number, string> = {
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  410: 'Gone',
+  429: 'Too Many Requests',
+  500: 'Server Error',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+};
 
 /**
  * The numbered list, one line each, as the model reads it.
@@ -181,14 +216,19 @@ export const browseWithAgent: Tool<z.infer<typeof browseInput>, unknown> = {
      * while holding four thousand words of it. A tool that succeeded has to
      * say so in the same breath as handing over what it got.
      */
+    const arrived = loadNote(page);
     return {
       finished: true,
       opened: true,
-      note:
-        `You opened ${target.host} in their browser and read it. It worked -- what follows is ` +
-        'the page. Answer from it, and do not tell the student you could not open it. The ' +
-        'numbered elements are what browser_act can click, type into or choose from. ' +
-        NEVER_INSTRUCTIONS,
+      ...(page?.httpStatus !== undefined ? { httpStatus: page.httpStatus } : {}),
+      note: arrived
+        ? `You opened ${target.host} in their browser. ${arrived} The numbered elements are ` +
+          'what browser_act can click, type into or choose from. ' +
+          NEVER_INSTRUCTIONS
+        : `You opened ${target.host} in their browser and read it. It worked -- what follows ` +
+          'is the page. Answer from it, and do not tell the student you could not open it. The ' +
+          'numbered elements are what browser_act can click, type into or choose from. ' +
+          NEVER_INSTRUCTIONS,
       ...reading(page, target.toString()),
     };
   },

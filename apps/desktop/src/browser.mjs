@@ -4,7 +4,8 @@ import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { CdpConnection } from './cdp.mjs';
 import { findBrowser } from './chrome.mjs';
-import { note } from './trace.mjs';
+import { codeForNetErrorName } from './load-wait.mjs';
+import { Failure, note } from './trace.mjs';
 
 /**
  * Launching and holding a browser the student is logged into.
@@ -188,8 +189,19 @@ export class PortalBrowser {
         sessionId,
       );
     });
-    await this.cdp.send('Page.navigate', { url }, sessionId);
-    return Promise.race([loaded, new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+    note('nav.start', { url });
+    // Chrome answers a navigation that cannot start -- no such host, a bad
+    // certificate -- with errorText, and the load event then never comes.
+    const { errorText } = await this.cdp.send('Page.navigate', { url }, sessionId);
+    const code = errorText ? codeForNetErrorName(errorText) : null;
+    if (code) throw new Failure(code, undefined, { url, errorText });
+    if (errorText) note('nav.aborted', { url, errorText });
+    const done = await Promise.race([
+      loaded,
+      new Promise((r) => setTimeout(() => r(false), timeoutMs)),
+    ]);
+    if (!done) note('nav.timeout', { url, afterMs: timeoutMs });
+    return done;
   }
 
   async currentUrl(sessionId) {
