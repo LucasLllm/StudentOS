@@ -16,6 +16,8 @@
  * Framing is NUL-delimited JSON: Chrome reads commands from fd 3 and writes
  * replies and events to fd 4.
  */
+
+import { Failure, note } from './trace.mjs';
 export class CdpConnection {
   #write;
   #nextId = 0;
@@ -23,12 +25,18 @@ export class CdpConnection {
   #listeners = new Map();
   #buffer = Buffer.alloc(0);
   #closed = null;
+  #timeoutMs;
 
   /**
    * @param {import('node:stream').Writable} toBrowser   child fd 3
    * @param {import('node:stream').Readable} fromBrowser child fd 4
    */
-  constructor(toBrowser, fromBrowser) {
+  /**
+   * @param {{ timeoutMs?: number }} [options] how long a command may go
+   *   unanswered. A Chrome that is alive but stuck used to hang the CLI forever.
+   */
+  constructor(toBrowser, fromBrowser, { timeoutMs = 30_000 } = {}) {
+    this.#timeoutMs = timeoutMs;
     this.#write = toBrowser;
     fromBrowser.on('data', (chunk) => this.#consume(chunk));
     fromBrowser.on('close', () => this.#fail(new Error('Browser closed the DevTools pipe.')));
@@ -41,7 +49,16 @@ export class CdpConnection {
     while ((index = this.#buffer.indexOf(0)) !== -1) {
       const raw = this.#buffer.subarray(0, index).toString('utf8');
       this.#buffer = this.#buffer.subarray(index + 1);
-      if (raw.length > 0) this.#dispatch(JSON.parse(raw));
+      if (raw.length === 0) continue;
+      let message;
+      try {
+        message = JSON.parse(raw);
+      } catch (error) {
+        // One garbled frame is dropped, not allowed to take the pipe down.
+        note('cdp.bad_frame', { error: error.message, length: raw.length });
+        continue;
+      }
+      this.#dispatch(message);
     }
   }
 
@@ -73,7 +90,20 @@ export class CdpConnection {
     if (this.#closed) return Promise.reject(this.#closed);
     const id = ++this.#nextId;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Failure('nav.timeout', `Chrome did not answer ${method} in time.`, { method }));
+      }, this.#timeoutMs);
+      this.#pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
       this.#write.write(
         JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0',
       );

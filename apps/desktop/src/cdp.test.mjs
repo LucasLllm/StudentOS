@@ -92,3 +92,21 @@ describe('CdpConnection', () => {
     await expect(pending).rejects.toThrow(/pipe/i);
   });
 });
+
+describe('CdpConnection, when Chrome stops answering', () => {
+  it('gives up on a command with no reply, instead of hanging the CLI', async () => {
+    const toBrowser = new PassThrough();
+    const fromBrowser = new PassThrough();
+    const cdp = new CdpConnection(toBrowser, fromBrowser, { timeoutMs: 20 });
+    await expect(cdp.send('Page.navigate')).rejects.toMatchObject({ code: 'nav.timeout' });
+  });
+
+  it('survives a frame that is not JSON and still answers the next one', async () => {
+    const { cdp, reply, fromBrowser } = harness();
+    const pending = cdp.send('Browser.getVersion');
+    await new Promise((r) => setImmediate(r));
+    fromBrowser.write('{not json\0');
+    reply({ id: 1, result: { ok: true } });
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+});

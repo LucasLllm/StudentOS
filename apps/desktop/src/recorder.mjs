@@ -94,8 +94,8 @@ export function startRecording(browser, sessionId, { raw = false } = {}) {
         const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
         shape = summarizeShape(JSON.parse(text), { raw });
       } catch {
-        // Body already evicted from Chrome's buffer, or not valid JSON after
-        // all. The endpoint is still worth reporting without its shape.
+        // expected: body already evicted from Chrome's buffer, or not valid
+        // JSON after all. The endpoint is still worth reporting without its shape.
       }
       const parsed = new URL(meta.url);
       const key = `${meta.method} ${parsed.origin}${parsed.pathname}`;

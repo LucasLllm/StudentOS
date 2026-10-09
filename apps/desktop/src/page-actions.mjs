@@ -24,12 +24,21 @@
  */
 
 import { signInScript } from './sign-in.mjs';
+import { Failure, note } from './trace.mjs';
 
 const ATTR = 'data-contexto-ref';
 const MAX_ELEMENTS = 150;
 
-/** A reason the agent can act on. Written here, and the only kind that travels back. */
-export class ActionError extends Error {}
+/**
+ * A reason the agent can act on, with its code. Written here, and the only kind
+ * of message that travels back.
+ */
+export class ActionError extends Failure {
+  constructor(code, message) {
+    super(code, message);
+    this.name = 'ActionError';
+  }
+}
 
 /**
  * Read the page: where it is, what it says, and what on it can be used.
@@ -307,7 +316,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function settle(wc, act, { timeoutMs = 30_000, quietMs = 800 } = {}) {
   await act();
   await sleep(250);
-  await loaded(wc, timeoutMs);
+  if (!(await loaded(wc, timeoutMs))) {
+    // Read anyway: a page still fetching its last advert is usually usable.
+    note('settle.still_loading', { afterMs: timeoutMs, url: wc.getURL?.() ?? null });
+  }
   await sleep(quietMs);
 }
 
@@ -333,6 +345,7 @@ async function run(session, script) {
 
 function gone(ref) {
   return new ActionError(
+    'page.element_gone',
     `There is no element [${ref}] on the page any more -- it has changed since it was read. ` +
       'Look at the page again and use a number from the new list.',
   );
@@ -352,7 +365,10 @@ let clicks = 0;
 async function drawn(session) {
   const wc = session.webContents;
   if (!wc?.capturePage) return;
-  await Promise.race([wc.capturePage().catch(() => {}), sleep(1000)]);
+  await Promise.race([
+    wc.capturePage().catch((error) => note('click.draw_failed', { error: error.message })),
+    sleep(1000),
+  ]);
 }
 
 /**
@@ -379,13 +395,15 @@ async function click(session, ref, { fallback = true } = {}) {
     let heard;
     try {
       heard = await run(session, CLICK_CHECK(token));
-    } catch {
+    } catch (error) {
       // The page went somewhere while being asked. The click took it there.
+      note('click.page_left', { ref, error: String(error?.message ?? error) });
       return true;
     }
     if (heard.gone || heard.landed === 'here') return true;
     if (heard.landed === 'elsewhere') {
       throw new ActionError(
+        'page.element_covered',
         `[${ref}] is behind something else on the page, so the click did not reach it. Close ` +
           'or dismiss whatever is in front of it first -- it is in the list too.',
       );
@@ -403,6 +421,7 @@ export async function pressKey(cdp, name) {
   const key = keyNamed(name);
   if (!key) {
     throw new ActionError(
+      'page.bad_key',
       `"${name}" is not a key this can press. It can press: ${Object.keys(KEYS).join(', ')}.`,
     );
   }
@@ -535,11 +554,17 @@ async function submitStep(session) {
     const { submitButton } = await run(session, SUBMIT_BUTTON);
     if (!submitButton) continue;
     try {
-      if (await click(session, SUBMIT_REF, { fallback: false })) return;
-    } catch {
+      if (await click(session, SUBMIT_REF, { fallback: false })) {
+        note('sign_in.submitted', { by: 'button', attempt });
+        return;
+      }
+      note('sign_in.submit_dropped', { attempt });
+    } catch (error) {
       // Something in front of it, for now.
+      note('sign_in.submit_covered', { attempt, error: String(error?.message ?? error) });
     }
   }
+  note('sign_in.submitted', { by: 'enter' });
   await pressKey(session.cdp, 'Enter');
 }
 
@@ -588,7 +613,10 @@ async function signInFromKeychain(session, credentialsFor) {
     if (state === 'none') {
       if (step === 0) {
         if (await throughGoogle()) continue;
-        throw new ActionError('This page is not asking for a sign-in. Look again.');
+        throw new ActionError(
+          'page.not_signin_page',
+          'This page is not asking for a sign-in. Look again.',
+        );
       }
       return; // Nothing left to fill: signed in, or a page that is not ours.
     }
@@ -598,6 +626,7 @@ async function signInFromKeychain(session, credentialsFor) {
       if (await throughGoogle()) continue;
       if (step === 0) {
         throw new ActionError(
+          'signin.no_credentials',
           'There is no saved sign-in for this site and no "Sign in with Google" button to ' +
             'press. Tell the student they can sign in once in the browser card in this ' +
             'conversation and it stays signed in, or save a sign-in under Settings, ' +
@@ -639,8 +668,10 @@ async function movedOn(session, origin, state, deadline) {
     try {
       if ((await session.evaluate(STEP_CHECK)) !== state) return;
       if ((await run(session, ORIGIN)).origin !== origin) return;
-    } catch {
-      return; // Asked mid-navigation: it is moving.
+    } catch (error) {
+      // Asked mid-navigation: it is moving.
+      note('sign_in.moving', { error: String(error?.message ?? error) });
+      return;
     }
   }
 }
@@ -654,8 +685,12 @@ async function type(session, ref, text, submit, credentialsFor) {
     await signInFromKeychain(session, credentialsFor);
     return;
   }
-  if (box.notEditable) throw new ActionError(`[${ref}] is not something that can be typed into.`);
-  if (box.readOnly) throw new ActionError(`[${ref}] does not accept typing right now.`);
+  if (box.notEditable) {
+    throw new ActionError('page.not_editable', `[${ref}] is not something that can be typed into.`);
+  }
+  if (box.readOnly) {
+    throw new ActionError('page.read_only', `[${ref}] does not accept typing right now.`);
+  }
   if (text) await session.cdp.send('Input.insertText', { text });
   else await pressKey(session.cdp, 'Backspace');
   if (submit) await pressKey(session.cdp, 'Enter');
@@ -664,10 +699,14 @@ async function type(session, ref, text, submit, credentialsFor) {
 async function select(session, ref, value) {
   const chosen = await run(session, SELECT_OPTION(ref, value));
   if (chosen.missing) throw gone(ref);
-  if (chosen.notSelect) throw new ActionError(`[${ref}] is not a drop-down list.`);
+  if (chosen.notSelect)
+    throw new ActionError('page.not_select', `[${ref}] is not a drop-down list.`);
   if (chosen.noMatch) {
     const options = (chosen.options ?? []).map((o) => `"${o}"`).join(', ');
-    throw new ActionError(`[${ref}] has no option matching "${value}". It offers: ${options}.`);
+    throw new ActionError(
+      'page.no_option',
+      `[${ref}] has no option matching "${value}". It offers: ${options}.`,
+    );
   }
 }
 
@@ -678,14 +717,19 @@ async function scroll(session, ref, direction) {
     return;
   }
   if (!DIRECTIONS.includes(direction)) {
-    throw new ActionError(`Scroll needs a direction (${DIRECTIONS.join(', ')}) or an element.`);
+    throw new ActionError(
+      'page.bad_scroll',
+      `Scroll needs a direction (${DIRECTIONS.join(', ')}) or an element.`,
+    );
   }
   await run(session, SCROLL_PAGE(direction));
 }
 
 function back(wc) {
   const history = wc.navigationHistory ?? wc;
-  if (!history.canGoBack()) throw new ActionError('There is no earlier page to go back to.');
+  if (!history.canGoBack()) {
+    throw new ActionError('page.no_history', 'There is no earlier page to go back to.');
+  }
   history.goBack();
 }
 
@@ -710,7 +754,12 @@ export async function performAction(session, action, { credentialsFor } = {}) {
   const kind = action?.action;
   const ref = refOf(action);
   const needsRef = () => {
-    if (!ref) throw new ActionError(`${kind} needs the number of an element from the page.`);
+    if (!ref) {
+      throw new ActionError(
+        'page.needs_ref',
+        `${kind} needs the number of an element from the page.`,
+      );
+    }
   };
 
   switch (kind) {
@@ -722,7 +771,9 @@ export async function performAction(session, action, { credentialsFor } = {}) {
       break;
     case 'type':
       needsRef();
-      if (typeof action.text !== 'string') throw new ActionError('type needs the text to type.');
+      if (typeof action.text !== 'string') {
+        throw new ActionError('page.needs_text', 'type needs the text to type.');
+      }
       await settle(wc, () =>
         type(session, ref, action.text, Boolean(action.submit), credentialsFor),
       );
@@ -736,8 +787,9 @@ export async function performAction(session, action, { credentialsFor } = {}) {
       break;
     case 'select':
       needsRef();
-      if (typeof action.value !== 'string')
-        throw new ActionError('select needs the option to choose.');
+      if (typeof action.value !== 'string') {
+        throw new ActionError('page.needs_text', 'select needs the option to choose.');
+      }
       await settle(wc, () => select(session, ref, action.value));
       break;
     case 'scroll':
@@ -747,7 +799,10 @@ export async function performAction(session, action, { credentialsFor } = {}) {
       await settle(wc, () => back(wc));
       break;
     default:
-      throw new ActionError(`"${kind}" is not something this browser can do.`);
+      throw new ActionError(
+        'page.unknown_action',
+        `"${kind}" is not something this browser can do.`,
+      );
   }
   return snapshot(session);
 }

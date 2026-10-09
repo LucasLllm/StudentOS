@@ -1,0 +1,82 @@
+/**
+ * Waiting for a page to load, and saying how it ended.
+ *
+ * Three endings: it loaded (with the address it ended on and the HTTP status),
+ * it failed (a coded Failure, with the reason Chromium gave), or it ran out of
+ * time (said so, with where it had got to -- the page may still be readable,
+ * so that one is the caller's to judge).
+ *
+ * Kept apart from site-session.mjs so it can be tested without Electron; all
+ * it needs is something that emits Electron's webContents load events.
+ */
+
+import { Failure, note } from './trace.mjs';
+
+/**
+ * Chromium's network error numbers, as failure codes.
+ * The full list is net/base/net_error_list.h.
+ */
+export function codeForNetError(error) {
+  if (error === -105 || error === -137) return 'nav.dns'; // NAME_NOT_RESOLVED, NAME_RESOLUTION_FAILED
+  if (error === -106) return 'nav.offline'; // INTERNET_DISCONNECTED
+  if (error === -7 || error === -118) {
+    return error === -7 ? 'nav.timeout' : 'nav.connection'; // TIMED_OUT, CONNECTION_TIMED_OUT
+  }
+  if (error <= -100 && error > -200) return 'nav.connection';
+  if (error <= -200 && error > -300) return 'nav.cert';
+  if (error === -20 || error === -21 || error === -301) return 'nav.blocked'; // BLOCKED_BY_CLIENT/ADMIN, DISALLOWED_URL_SCHEME
+  return 'nav.failed';
+}
+
+/** ERR_ABORTED: the load was replaced -- a redirect, or a download -- not a failure. */
+const ABORTED = -3;
+
+/**
+ * @param {import('node:events').EventEmitter & { getURL(): string }} wc
+ * @returns {Promise<{ ok: true, url: string, status: number|null } |
+ *   { ok: false, timedOut: true, url: string }>}
+ */
+export function waitForLoad(wc, { timeoutMs = 30_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let status = null;
+    const started = Date.now();
+
+    const navigated = (_event, url, code) => {
+      status = code ?? null;
+      note('nav.response', { url, status });
+    };
+    const finished = () => {
+      stop();
+      resolve({ ok: true, url: wc.getURL(), status });
+    };
+    const failed = (_event, error, description, url, isMainFrame) => {
+      if (!isMainFrame) {
+        note('nav.subframe_failed', { netError: error, description, url });
+        return;
+      }
+      if (error === ABORTED) {
+        note('nav.aborted', { url });
+        return;
+      }
+      stop();
+      reject(new Failure(codeForNetError(error), undefined, { netError: error, description, url }));
+    };
+    const timer = setTimeout(() => {
+      stop();
+      const url = wc.getURL();
+      note('nav.timeout', { url, afterMs: Date.now() - started });
+      resolve({ ok: false, timedOut: true, url });
+    }, timeoutMs);
+
+    function stop() {
+      clearTimeout(timer);
+      wc.off('did-navigate', navigated);
+      wc.off('did-finish-load', finished);
+      wc.off('did-fail-load', failed);
+    }
+
+    wc.on('did-navigate', navigated);
+    wc.on('did-finish-load', finished);
+    wc.on('did-fail-load', failed);
+  });
+}

@@ -58,3 +58,31 @@ describe('saved sign-ins', () => {
     }
   });
 });
+
+describe('when the keychain will not answer', () => {
+  const failing = (status, code) => () => {
+    const error = new Error('security failed');
+    if (status !== undefined) error.status = status;
+    if (code) error.code = code;
+    throw error;
+  };
+
+  it.runIf(keychainAvailable())('treats "not found" as nothing saved', () => {
+    expect(readCredentials('x', { exec: failing(44) })).toBeNull();
+  });
+
+  it.runIf(keychainAvailable())(
+    'says so when the keychain refused, instead of "nothing saved"',
+    () => {
+      expect(() => readCredentials('x', { exec: failing(128) })).toThrow(
+        expect.objectContaining({ code: 'signin.keychain_declined' }),
+      );
+    },
+  );
+
+  it.runIf(keychainAvailable())('says so when the keychain tool is missing', () => {
+    expect(() => readCredentials('x', { exec: failing(undefined, 'ENOENT') })).toThrow(
+      expect.objectContaining({ code: 'signin.keychain_unavailable' }),
+    );
+  });
+});

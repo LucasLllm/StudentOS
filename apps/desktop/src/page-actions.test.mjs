@@ -729,3 +729,47 @@ describe('signing in', () => {
     expect(session.sent.some((s) => s.method === 'Input.insertText')).toBe(false);
   });
 });
+
+describe('what each refusal is called', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    [{ action: 'click' }, 'page.needs_ref'],
+    [{ action: 'type', ref: 4 }, 'page.needs_text'],
+    [{ action: 'select', ref: 4 }, 'page.needs_text'],
+    [{ action: 'press', key: 'F13' }, 'page.bad_key'],
+    [{ action: 'scroll' }, 'page.bad_scroll'],
+    [{ action: 'dance' }, 'page.unknown_action'],
+  ])('%o fails as %s', async (action, code) => {
+    await expect(act(fakeSession(), action)).rejects.toMatchObject({ code });
+  });
+
+  it('calls a vanished element element_gone', async () => {
+    const session = fakeSession(() => JSON.stringify({ missing: true }));
+    await expect(act(session, { action: 'click', ref: 3 })).rejects.toMatchObject({
+      code: 'page.element_gone',
+    });
+  });
+
+  it('calls a covered element element_covered', async () => {
+    const session = fakeSession((script) =>
+      script.includes('getBoundingClientRect')
+        ? JSON.stringify({ x: 1, y: 1, onScreen: true })
+        : script.includes('__cxClick')
+          ? JSON.stringify({ landed: 'elsewhere' })
+          : '{}',
+    );
+    await expect(act(session, { action: 'click', ref: 3 })).rejects.toMatchObject({
+      code: 'page.element_covered',
+    });
+  });
+
+  it('calls going back with no history no_history', async () => {
+    const session = fakeSession();
+    session.webContents.navigationHistory.canGoBack = () => false;
+    await expect(act(session, { action: 'back' })).rejects.toMatchObject({
+      code: 'page.no_history',
+    });
+  });
+});

@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WebContentsView, session } from 'electron';
+import { waitForLoad } from './load-wait.mjs';
+import { Failure, note } from './trace.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -164,33 +166,46 @@ export class SiteSession {
    * Navigate and wait for the page to settle.
    *
    * did-finish-load rather than a timer, with a timer as the backstop: a
-   * portal that never finishes loading must not hang the whole sync.
+   * portal that never finishes loading must not hang the whole sync. A load
+   * that fails throws a coded Failure saying why (see load-wait.mjs); one that
+   * runs out of time resolves { ok: false, timedOut: true }, because a page
+   * still loading its last advert is usually perfectly readable.
    */
   async navigate(url, _sessionId, { timeoutMs = 30_000 } = {}) {
     const wc = this.webContents;
     if (!wc) throw new Error('This session is not open.');
-
-    const settled = new Promise((resolve) => {
-      const done = () => {
-        wc.off('did-finish-load', done);
-        wc.off('did-fail-load', done);
-        resolve(true);
-      };
-      wc.once('did-finish-load', done);
-      wc.once('did-fail-load', done);
-    });
-
-    await wc.loadURL(url).catch(() => {});
-    return Promise.race([settled, new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+    note('nav.start', { url });
+    // Listening before the load starts, so a fast failure is not missed.
+    const loaded = waitForLoad(wc, { timeoutMs });
+    /*
+     * loadURL rejects on the same failures did-fail-load reports -- and on a
+     * redirect that replaces the load, which is not a failure at all. The
+     * events are what decide; the rejection is only noted.
+     */
+    wc.loadURL(url).catch((error) => note('nav.load_url_rejected', { error: error.message }));
+    const result = await loaded;
+    note('nav.done', result);
+    return result;
   }
 
   /** Read something out of the page. */
   async evaluate(expression) {
-    const { result } = await this.cdp.send('Runtime.evaluate', {
+    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
       expression,
       returnByValue: true,
       awaitPromise: true,
     });
+    /*
+     * A script that threw used to come back as undefined, which the callers
+     * read as an empty answer -- and a click that could not find its target
+     * carried on as if it had. Now it is a failure, with what the page said
+     * kept in the trace.
+     */
+    if (exceptionDetails) {
+      throw new Failure('page.script_failed', undefined, {
+        description: exceptionDetails.exception?.description ?? exceptionDetails.text ?? null,
+      });
+    }
     return result?.value;
   }
 
@@ -215,7 +230,8 @@ export class SiteSession {
       const { width } = image.getSize();
       const small = width > 2 ? image.resize({ width: Math.round(width / 2) }) : image;
       return `data:image/jpeg;base64,${small.toJPEG(60).toString('base64')}`;
-    } catch {
+    } catch (error) {
+      note('capture.failed', { error: String(error?.message ?? error) });
       return null;
     }
   }
@@ -235,8 +251,8 @@ export class SiteSession {
     try {
       if (this.attached) this.webContents?.debugger.detach();
     } catch {
-      // Already detached, or the view is gone. Either way there is nothing
-      // left to release.
+      // expected: already detached, or the view is gone. Either way there is
+      // nothing left to release.
     }
     this.attached = false;
     this.cdp = null;
@@ -251,7 +267,7 @@ export class SiteSession {
     try {
       this.view?.webContents?.close();
     } catch {
-      // Already gone.
+      // expected: already gone.
     }
     this.view = null;
   }
