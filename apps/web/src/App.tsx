@@ -8,6 +8,7 @@ import { applyAppearance, useResolvedTheme, type Appearance } from './lib/theme.
 import { Chat } from './screens/Chat.js';
 import { NewChat } from './screens/NewChat.js';
 import { Projects } from './screens/Projects.js';
+import { Debug } from './screens/Debug.js';
 import { ProjectPage } from './screens/ProjectPage.js';
 import { Sidebar } from './screens/Sidebar.js';
 import { LinkDevice } from './screens/LinkDevice.js';
@@ -201,6 +202,10 @@ export function App() {
         )}
 
         {route.name === 'link' && <LinkDevice requestId={route.requestId} />}
+
+        {(route.name === 'debug' || route.name === 'debugAttempt') && (
+          <Debug attemptId={route.name === 'debugAttempt' ? route.attemptId : null} />
+        )}
 
         {route.name === 'notFound' && (
           <div className="panel">

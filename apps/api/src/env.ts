@@ -72,6 +72,13 @@ const envSchema = z.object({
    */
   MASTER_ENCRYPTION_KEY: z.string().min(1),
 
+  /**
+   * Who may read the debug page: every student's browser traces, screenshots
+   * included. Comma-separated emails, compared case-insensitively. Unset means
+   * nobody -- the routes answer 404 to everyone.
+   */
+  DEVELOPER_EMAILS: optional(z.string()),
+
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
 

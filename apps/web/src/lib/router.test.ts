@@ -77,3 +77,12 @@ describe('projects', () => {
     expect(parseRoute('/projects/abc/extra')).toEqual({ name: 'notFound' });
   });
 });
+
+describe('the debug page', () => {
+  it('parses and builds its two addresses', () => {
+    expect(parseRoute('/debug')).toEqual({ name: 'debug' });
+    expect(parseRoute('/debug/abc')).toEqual({ name: 'debugAttempt', attemptId: 'abc' });
+    expect(routeToPath({ name: 'debug' })).toBe('/debug');
+    expect(routeToPath({ name: 'debugAttempt', attemptId: 'abc' })).toBe('/debug/abc');
+  });
+});

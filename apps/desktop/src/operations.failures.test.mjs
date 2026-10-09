@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+/** The suite's own log folder (vitest.config.ts), restored after each override. */
+const TEST_LOG_DIR = process.env['CONTEXTO_LOG_DIR'];
+
 /**
  * How the operations fail, each with its code. The browser, the crawl and the
  * server are replaced, so these run without Chrome, Electron or a network.
@@ -46,7 +49,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env['CONTEXTO_CONFIG_DIR'];
-  delete process.env['CONTEXTO_LOG_DIR'];
+  process.env['CONTEXTO_LOG_DIR'] = TEST_LOG_DIR;
   rmSync(dir, { recursive: true, force: true });
 });
 

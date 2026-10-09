@@ -20,6 +20,8 @@ import { createProjectRoutes } from './projects.js';
 import { UPLOAD_REFUSALS } from './uploads.js';
 import { createChannelRoutes } from './channels.js';
 import { createDeviceRoutes } from './devices.js';
+import { createDebugRoutes } from './debug.js';
+import { isDeveloperEmail } from '../middleware/developer.js';
 import { createGoogleRoutes } from './google.js';
 import { createHookRoutes } from './hooks.js';
 import { createVaultRoutes } from './vault.js';
@@ -210,6 +212,7 @@ export function createRoutes(ctx: AppContext) {
           preferredName: row.preferredName?.trim() || row.name.trim().split(/\s+/)[0] || '',
           appearance: (row.appearance ?? 'system') as 'light' | 'dark' | 'system',
           hasAvatar: Boolean(row.image),
+          developer: isDeveloperEmail(ctx.env.DEVELOPER_EMAILS, row.email),
         } satisfies MeProfile);
       })
 
@@ -245,6 +248,7 @@ export function createRoutes(ctx: AppContext) {
       .route('/vault', createVaultRoutes(ctx))
       .route('/channels', createChannelRoutes(ctx))
       .route('/devices', createDeviceRoutes(ctx))
+      .route('/debug', createDebugRoutes(ctx))
       .route('/hooks', createHookRoutes(ctx))
 
       /** Which BYOK keys this student has stored. Never includes key material. */

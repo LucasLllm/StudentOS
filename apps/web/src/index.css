@@ -4109,3 +4109,128 @@ body.dialog-open .app {
     animation: none;
   }
 }
+
+/* Debug page (developers only) ------------------------------------------- */
+
+.debug {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  color: var(--ink);
+}
+.debug-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.debug-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.debug-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.debug-row {
+  display: grid;
+  grid-template-columns: 11rem 12rem 1fr 14rem 4rem;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.debug-row:last-child {
+  border-bottom: 0;
+}
+.debug-row:hover {
+  background: var(--tint);
+}
+.debug-row.is-failed .debug-code,
+.debug-failed {
+  color: var(--danger);
+}
+.debug-code,
+.debug-ms,
+.debug-when {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+.debug-who,
+.debug-ms,
+.debug-when {
+  color: var(--ink-faint);
+}
+.debug-what,
+.debug-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.debug-message {
+  grid-column: 2 / -1;
+  color: var(--ink-soft);
+  font-size: 0.9em;
+}
+.debug-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+}
+.debug-facts dt {
+  color: var(--ink-faint);
+}
+.debug-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.debug-steps {
+  padding-left: 1.5em;
+}
+.debug-steps li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.debug-steps code {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.85em;
+}
+.debug-pre {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--wash);
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+.debug-shot {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+@media (max-width: 720px) {
+  .debug-row {
+    grid-template-columns: 1fr auto;
+  }
+  .debug-what,
+  .debug-who,
+  .debug-when {
+    grid-column: 1 / -1;
+  }
+}

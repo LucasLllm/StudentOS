@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { flushOutbox, logDir, logEvent, queueUpload, writeLocal } from './trace-store.mjs';
 
+/** The suite's own log folder (vitest.config.ts), restored after each override. */
+const TEST_LOG_DIR = process.env['CONTEXTO_LOG_DIR'];
+
 /**
  * A trace is only worth anything if it survives the failure it describes --
  * which is often "the network was gone". So it is written on the Mac first,
@@ -16,7 +19,7 @@ beforeEach(() => {
   process.env['CONTEXTO_LOG_DIR'] = dir;
 });
 afterEach(() => {
-  delete process.env['CONTEXTO_LOG_DIR'];
+  process.env['CONTEXTO_LOG_DIR'] = TEST_LOG_DIR;
   rmSync(dir, { recursive: true, force: true });
 });
 

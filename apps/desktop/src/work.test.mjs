@@ -7,6 +7,9 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** The suite's own log folder (vitest.config.ts), restored after each override. */
+const TEST_LOG_DIR = process.env['CONTEXTO_LOG_DIR'];
+
 /**
  * What the server hears about each piece of work. The agent's whole picture of
  * what happened on the student's computer is this, so it has to carry a code
@@ -156,7 +159,7 @@ describe('throughGate', () => {
       release();
       await holding;
     } finally {
-      delete process.env['CONTEXTO_LOG_DIR'];
+      process.env['CONTEXTO_LOG_DIR'] = TEST_LOG_DIR;
       rmSync(dir, { recursive: true, force: true });
     }
   });

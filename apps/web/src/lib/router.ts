@@ -21,6 +21,8 @@ export type Route =
   | { name: 'project'; projectId: string }
   | { name: 'settings' }
   | { name: 'link'; requestId: string }
+  | { name: 'debug' }
+  | { name: 'debugAttempt'; attemptId: string }
   | { name: 'notFound' };
 
 export function parseRoute(pathname: string): Route {
@@ -33,6 +35,14 @@ export function parseRoute(pathname: string): Route {
     if (segments.length === 1) return { name: 'projects' };
     if (segments.length === 2 && segments[1]) {
       return { name: 'project', projectId: safeDecode(segments[1]) };
+    }
+  }
+
+  // Developers only; the server answers 404 to everyone else.
+  if (segments[0] === 'debug') {
+    if (segments.length === 1) return { name: 'debug' };
+    if (segments.length === 2 && segments[1]) {
+      return { name: 'debugAttempt', attemptId: safeDecode(segments[1]) };
     }
   }
 
@@ -90,6 +100,10 @@ export function routeToPath(route: Route): string {
       return '/settings';
     case 'link':
       return `/link/${encodeURIComponent(route.requestId)}`;
+    case 'debug':
+      return '/debug';
+    case 'debugAttempt':
+      return `/debug/${encodeURIComponent(route.attemptId)}`;
     default:
       return '/';
   }

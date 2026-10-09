@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -27,6 +29,13 @@ export default defineConfig({
        * something starts to, it fails at once instead of reaching a real API.
        */
       VITE_API_BASE_URL: 'http://127.0.0.1:1',
+      /*
+       * Traces and app events from the desktop code go here under test, never
+       * into ~/Library/Logs. They did, once: the session checks wrote "offline"
+       * events into the real log of whoever ran the suite. Tests that care
+       * about the log set their own directory on top of this.
+       */
+      CONTEXTO_LOG_DIR: join(tmpdir(), 'contexto-test-logs'),
     },
   },
 });
