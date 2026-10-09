@@ -33,7 +33,7 @@ import {
 } from './operations.mjs';
 import { attempt, onRecord } from './trace.mjs';
 import { flushOutbox, logEvent, queueUpload, writeLocal } from './trace-store.mjs';
-import { reportWithRetry, runWorkItem } from './work.mjs';
+import { reportWithRetry, runWorkItem, throughGate } from './work.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const API_BASE = process.env['CONTEXTO_API'] ?? 'https://contextoagent.ai';
@@ -308,19 +308,12 @@ handle('addPortal', (site) => {
   // Added is added. The first sign-in and read follow quietly, and a site
   // they do not work for is signed into by the agent when it opens it. Quietly
   // for the student, not for the trace: how it went is recorded either way.
-  void drivingBrowser(
+  void throughGate(
+    drivingBrowser,
     () => attempt({ kind: 'first_sign_in', portalId: portal.id }, () => firstSignIn(portal.id)),
     { kind: 'first_sign_in', portalId: portal.id },
-  )
-    .then((ran) => {
-      if (!ran) {
-        logEvent('transport.busy', 'Skipped the first sign-in: the browser was busy.', {
-          portalId: portal.id,
-          busy: drivingBrowser.current(),
-        });
-      }
-    })
-    .finally(notifyChanged);
+    'the first sign-in',
+  ).finally(notifyChanged);
   return { portal };
 });
 handle('removePortal', (id) => removePortal(id));
@@ -387,13 +380,12 @@ handle('siteViewBounds', (bounds) => {
  * ask for one. The window shows the last error per portal instead.
  */
 async function syncAll({ onlyStale = false } = {}) {
-  const ran = await drivingBrowser(() => syncAllPass({ onlyStale }), { kind: 'sync_all' });
-  if (!ran) {
-    logEvent('transport.busy', 'Skipped a scheduled sync: the browser was busy.', {
-      busy: drivingBrowser.current(),
-    });
-  }
-  return ran;
+  return throughGate(
+    drivingBrowser,
+    () => syncAllPass({ onlyStale }),
+    { kind: 'sync_all' },
+    'a scheduled sync',
+  );
 }
 
 async function syncAllPass({ onlyStale }) {

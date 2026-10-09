@@ -75,6 +75,7 @@ describe('outbox', () => {
     };
     expect(await flushOutbox(failing)).toEqual({ sent: 0, kept: 1 });
     expect(readdirSync(join(dir, 'outbox'))).toEqual(['a.json']);
+    expect(today()).toContain('"code":"transport.report_failed"');
 
     const sent = [];
     expect(await flushOutbox(async (r) => sent.push(r))).toEqual({ sent: 1, kept: 0 });

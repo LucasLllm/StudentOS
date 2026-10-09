@@ -601,11 +601,15 @@ describe('signing in', () => {
     const slow = (i) => ({ state: 'username', origin: `https://step${i}.studyo.app`, lag: 19 });
     const session = fakeSession(signInFlow([0, 1, 2, 3, 4, 5].map(slow)));
     const started = Date.now();
-    await runAction(
-      session,
-      { action: 'sign_in' },
-      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
-    );
+    // It stops in time -- and says it stopped, rather than handing back the
+    // page as though the sign-in had finished.
+    await expect(
+      runAction(
+        session,
+        { action: 'sign_in' },
+        { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+      ),
+    ).rejects.toMatchObject({ code: 'signin.timeout' });
     expect(Date.now() - started).toBeLessThan(60_000);
   });
 
@@ -658,10 +662,16 @@ describe('signing in', () => {
         google: [{ state: 'username', origin: 'https://accounts.google.com' }],
       }),
     );
-    // Nothing saved for Google either, so it stops on Google's page and hands
-    // that back rather than refusing.
-    const after = await runAction(session, { action: 'sign_in' }, { credentialsFor: () => null });
-    expect(after.title).toBe('X');
+    // Nothing saved for Google either, so it stops on Google's page -- and says
+    // why, rather than handing the page back as if that were signed in.
+    await expect(
+      runAction(session, { action: 'sign_in' }, { credentialsFor: () => null }),
+    ).rejects.toMatchObject({
+      code: 'signin.no_credentials',
+      message: expect.stringContaining('accounts.google.com'),
+    });
+    const asked = session.evaluate.mock.calls.map((c) => c[0]);
+    expect(asked.some(isGoogleButton)).toBe(true);
     expect(fillsEvaluated(session)).toEqual([]);
   });
 
@@ -712,7 +722,93 @@ describe('signing in', () => {
         { action: 'sign_in' },
         { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
       ),
-    ).rejects.toThrow(/not asking for a sign-in/i);
+    ).rejects.toMatchObject({
+      code: 'page.not_signin_page',
+      message: expect.stringMatching(/not asking for a sign-in/i),
+    });
+  });
+
+  it('says it signed in only after checking the site stopped asking', async () => {
+    const session = fakeSession(
+      signInFlow([
+        { state: 'username', origin: 'https://studyo.app' },
+        { state: 'password', origin: 'https://studyo.app' },
+      ]),
+    );
+    const after = await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(after.signIn).toMatchObject({ status: 'signed_in', steps: 2 });
+  });
+
+  it('reports a second factor as the student’s step, not as signed in', async () => {
+    const session = fakeSession(
+      signInFlow([
+        { state: 'password', origin: 'https://accounts.google.com' },
+        { state: 'second-factor', origin: 'https://accounts.google.com' },
+      ]),
+    );
+    const after = await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(after.signIn.status).toBe('second_factor');
+  });
+
+  it('calls a step that comes back unchanged a rejected sign-in, with no Google to try', async () => {
+    const refused = { state: 'password', origin: 'https://studyo.app' };
+    const session = fakeSession(signInFlow([refused, refused, refused]));
+    await expect(
+      runAction(
+        session,
+        { action: 'sign_in' },
+        { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+      ),
+    ).rejects.toMatchObject({ code: 'signin.rejected' });
+  });
+
+  it('does not call an unknown Google step signed in', async () => {
+    // Filled Google's password, then Google shows something with no sign-in box
+    // (an account chooser). That is not the site, so it is not signed in.
+    const flow = signInFlow([{ state: 'password', origin: 'https://accounts.google.com' }]);
+    const session = fakeSession((script) =>
+      script.includes('location.origin') && fillsEvaluated(session).length > 0
+        ? JSON.stringify({ origin: 'https://accounts.google.com' })
+        : flow(script),
+    );
+    await expect(
+      runAction(
+        session,
+        { action: 'sign_in' },
+        { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+      ),
+    ).rejects.toMatchObject({ code: 'signin.stuck' });
+  });
+
+  it('never lets the password into the trace, however the sign-in ends', async () => {
+    const { attempt } = await import('./trace.mjs');
+    const refused = { state: 'password', origin: 'https://studyo.app' };
+    const session = fakeSession(signInFlow([refused, refused]));
+    const { secret } = await import('./trace.mjs');
+    const result = await attempt({ kind: 'act' }, async () => {
+      const done = runAction(
+        session,
+        { action: 'sign_in' },
+        {
+          credentialsFor: () => {
+            // As readCredentials does when it hands a password over.
+            secret('hunter2');
+            return { username: 'alice', password: 'hunter2' };
+          },
+        },
+      );
+      return done;
+    });
+    expect(result.code).toBe('signin.rejected');
+    expect(JSON.stringify(result)).not.toContain('hunter2');
   });
 
   it('types the saved sign-in, never the agent text, into a password box', async () => {
@@ -763,6 +859,16 @@ describe('what each refusal is called', () => {
     await expect(act(session, { action: 'click', ref: 3 })).rejects.toMatchObject({
       code: 'page.element_covered',
     });
+  });
+
+  it.each([
+    [{ notEditable: true }, { action: 'type', ref: 4, text: 'x' }, 'page.not_editable'],
+    [{ readOnly: true }, { action: 'type', ref: 4, text: 'x' }, 'page.read_only'],
+    [{ notSelect: true }, { action: 'select', ref: 4, value: 'x' }, 'page.not_select'],
+    [{ noMatch: true, options: [] }, { action: 'select', ref: 4, value: 'x' }, 'page.no_option'],
+  ])('a page answering %o to %o fails as %s', async (answer, action, code) => {
+    const session = fakeSession(() => JSON.stringify(answer));
+    await expect(act(session, action)).rejects.toMatchObject({ code });
   });
 
   it('calls going back with no history no_history', async () => {

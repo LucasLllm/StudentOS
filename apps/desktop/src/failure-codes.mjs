@@ -44,10 +44,8 @@ export const CODES = Object.freeze({
   'signin.keychain_declined':
     'The keychain did not hand over the saved sign-in -- the request was declined or blocked.',
   'signin.rejected': 'The site did not accept the saved sign-in.',
-  'signin.second_factor': 'The site is asking for a second step only the student can complete.',
   'signin.stuck': 'The sign-in reached a step it does not know how to complete.',
   'signin.timeout': 'The sign-in took too long and was stopped.',
-  'signin.no_way_in': 'The sign-in reached a page the saved sign-in does not belong to.',
 
   'sync.not_linked': 'This computer is not linked to an account.',
   'sync.unknown_site': 'There is no connected site by that name on this computer.',

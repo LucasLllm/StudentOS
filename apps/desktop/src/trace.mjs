@@ -115,22 +115,15 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
     value = await store.run(current, fn);
     record.outcome = 'ok';
   } catch (error) {
-    // expected: this is the recorder itself -- the error becomes the outcome.
-    record.outcome = 'failed';
-    if (error instanceof Failure) {
-      record.code = error.code;
-      record.message = error.message;
-      if (Object.keys(error.detail).length) record.detail = shorten(error.detail);
-    } else {
-      record.code = 'internal.unexpected';
-      // The words of an error we did not write may be the page's, so the
-      // agent gets our sentence and the trace gets the rest.
-      record.message = CODES['internal.unexpected'];
-      record.error = {
-        name: error?.name ?? typeof error,
-        message: String(error?.message ?? error),
-        stack: String(error?.stack ?? ''),
-      };
+    try {
+      classify(record, error);
+    } catch (unreadable) {
+      /*
+       * expected: something was thrown that cannot even be read -- its
+       * properties throw. The attempt still ends, as internal.no_outcome, and
+       * attempt() itself never throws.
+       */
+      record.error = { name: 'Unreadable', message: safeString(unreadable) };
     }
     if (current.capture) await store.run(current, () => takeScreenshot(current));
   } finally {
@@ -154,6 +147,35 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
   return clean.outcome === 'ok'
     ? { ok: true, value, record: clean }
     : { ok: false, code: clean.code, message: clean.message, record: clean };
+}
+
+/** Fill in a failed record from what was thrown. */
+function classify(record, error) {
+  if (error instanceof Failure) {
+    record.code = error.code;
+    record.message = error.message;
+    if (Object.keys(error.detail).length) record.detail = shorten(error.detail);
+  } else {
+    // The words of an error we did not write may be the page's, so the
+    // agent gets our sentence and the trace gets the rest.
+    record.error = {
+      name: error?.name ?? typeof error,
+      message: String(error?.message ?? error),
+      stack: String(error?.stack ?? ''),
+    };
+    record.code = 'internal.unexpected';
+    record.message = CODES['internal.unexpected'];
+  }
+  record.outcome = 'failed';
+}
+
+function safeString(value) {
+  try {
+    return String(value?.message ?? value);
+  } catch {
+    // expected: even this cannot be read; say so.
+    return '(unreadable)';
+  }
 }
 
 async function takeScreenshot(current) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { userAgentFor } from './site-session.mjs';
+import { SiteSession, userAgentFor } from './site-session.mjs';
 
 /**
  * Measured, 21 September 2026, on Google's sign-in page from this view with
@@ -34,5 +34,20 @@ describe('userAgentFor', () => {
       const ua = userAgentFor(platform);
       expect(ua).not.toMatch(/Electron|ContextoAgent|Chrome|Safari/);
     }
+  });
+});
+
+describe('evaluate', () => {
+  it('fails as page.script_failed when the script threw, instead of answering nothing', async () => {
+    const session = new SiteSession({ portalId: 'x' });
+    session.cdp = {
+      send: async () => ({
+        exceptionDetails: { text: 'Uncaught', exception: { description: 'TypeError: x' } },
+      }),
+    };
+    await expect(session.evaluate('x()')).rejects.toMatchObject({
+      code: 'page.script_failed',
+      detail: { description: 'TypeError: x' },
+    });
   });
 });

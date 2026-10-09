@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CODES } from './failure-codes.mjs';
 import { Failure, onRecord } from './trace.mjs';
-import { reportWithRetry, runWorkItem } from './work.mjs';
+import { reportWithRetry, runWorkItem, throughGate } from './work.mjs';
+import { oneAtATime } from './operations.mjs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * What the server hears about each piece of work. The agent's whole picture of
@@ -122,5 +126,38 @@ describe('reportWithRetry', () => {
     const result = await reportWithRetry(send, { delays: [1, 1] });
     expect(result).toEqual({ sent: false, tries: 3, error: 'offline' });
     expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('throughGate', () => {
+  it('logs a pass the busy browser turned away, saying what held it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cx-gate-'));
+    process.env['CONTEXTO_LOG_DIR'] = dir;
+    try {
+      const gate = oneAtATime();
+      let release;
+      const holding = gate(() => new Promise((r) => (release = r)), {
+        kind: 'sync',
+        portalId: 'k',
+      });
+      const ran = await throughGate(
+        gate,
+        async () => {},
+        { kind: 'first_sign_in' },
+        'the first sign-in',
+      );
+      expect(ran).toBe(false);
+      const [file] = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+      const line = JSON.parse(readFileSync(join(dir, file), 'utf8').trim());
+      expect(line).toMatchObject({
+        code: 'transport.busy',
+        detail: { kind: 'first_sign_in', busy: { kind: 'sync', portalId: 'k' } },
+      });
+      release();
+      await holding;
+    } finally {
+      delete process.env['CONTEXTO_LOG_DIR'];
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -163,3 +163,26 @@ describe('CODES', () => {
     }
   });
 });
+
+describe('something thrown that cannot be read', () => {
+  it('still ends the attempt, as internal.no_outcome, without throwing', async () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('do not touch');
+        },
+        getPrototypeOf() {
+          return Object.prototype;
+        },
+      },
+    );
+    const result = await attempt({ kind: 'act' }, async () => {
+      throw hostile;
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('internal.no_outcome');
+    expect(result.message).toBe(CODES['internal.no_outcome']);
+    expect(result.record.error).toMatchObject({ name: 'Unreadable' });
+  });
+});

@@ -596,6 +596,7 @@ async function signInFromKeychain(session, credentialsFor) {
     if (triedGoogle) return false;
     triedGoogle = true;
     const { clicked } = await run(session, GOOGLE_BUTTON);
+    note('sign_in.google_button', { clicked });
     if (!clicked) return false;
     await settle(wc, async () => {}, { quietMs: 1000 });
     await new Promise((r) => setTimeout(r, 800));
@@ -607,9 +608,16 @@ async function signInFromKeychain(session, credentialsFor) {
    * here is picked up by the next sign_in, from wherever it got to.
    */
   const deadline = Date.now() + SIGN_IN_BUDGET_MS;
+  let last = { state: null, origin: null };
   for (let step = 0; step < 6 && Date.now() < deadline; step += 1) {
     const state = await session.evaluate(STEP_CHECK);
-    if (state === 'second-factor') return; // The student finishes this one step.
+    const { origin } = await run(session, ORIGIN);
+    last = { state, origin };
+    note('sign_in.step', { step, state, origin });
+
+    // The student finishes this one step; it is theirs, not a failure.
+    if (state === 'second-factor') return { status: 'second_factor', steps: step, origin };
+
     if (state === 'none') {
       if (step === 0) {
         if (await throughGoogle()) continue;
@@ -618,22 +626,34 @@ async function signInFromKeychain(session, credentialsFor) {
           'This page is not asking for a sign-in. Look again.',
         );
       }
-      return; // Nothing left to fill: signed in, or a page that is not ours.
+      /*
+       * Checked, not assumed. No sign-in box on the site itself is signed in;
+       * no sign-in box on Google's own pages is a Google step this does not
+       * know -- choosing an account, a consent screen -- and calling that
+       * signed in is how the agent came to tell students it had worked.
+       */
+      if (isGoogleOrigin(origin)) {
+        throw new Failure(
+          'signin.stuck',
+          'The sign-in stopped on a Google page that asks for something other than a username or password -- probably choosing an account or allowing access. Ask the student to finish it in the browser card, then look again.',
+          { state, origin, step },
+        );
+      }
+      return { status: 'signed_in', steps: step, origin };
     }
-    const { origin } = await run(session, ORIGIN);
+
     const saved = origin ? await credentialsFor?.(origin) : null;
     if (!saved) {
       if (await throughGoogle()) continue;
-      if (step === 0) {
-        throw new ActionError(
-          'signin.no_credentials',
-          'There is no saved sign-in for this site and no "Sign in with Google" button to ' +
-            'press. Tell the student they can sign in once in the browser card in this ' +
-            'conversation and it stays signed in, or save a sign-in under Settings, ' +
-            'Connections, Sites.',
-        );
-      }
-      return; // As far as the saved sign-in reaches; a later page is not ours to fill.
+      note('sign_in.no_credentials_for', { origin, step });
+      throw new ActionError(
+        'signin.no_credentials',
+        (step === 0
+          ? 'There is no saved sign-in for this site and no "Sign in with Google" button to press. '
+          : `The sign-in reached ${hostOf(origin)}, and there is no saved sign-in that belongs there. `) +
+          'Tell the student they can sign in once in the browser card in this conversation and ' +
+          'it stays signed in, or save a sign-in under Settings, Connections, Sites.',
+      );
     }
     // A page that comes back the same after a fill did not advance -- a refused
     // sign-in, or a step this cannot work -- so try Google, or stop rather than
@@ -641,17 +661,69 @@ async function signInFromKeychain(session, credentialsFor) {
     const mark = `${origin}|${state}`;
     if (seen.has(mark)) {
       if (await throughGoogle()) continue;
-      return;
+      const pageSaid = await run(session, ERROR_TEXT).catch((error) => {
+        note('sign_in.error_text_unreadable', { error: error.message });
+        return {};
+      });
+      throw new Failure(
+        'signin.rejected',
+        `${hostOf(origin)} did not accept the saved sign-in: its ${state} step came back ` +
+          'unchanged after it was filled and submitted.' +
+          (pageSaid.text ? ' The page showed an error message.' : ''),
+        { state, origin, step, pageSaid: pageSaid.text ?? null },
+      );
     }
     seen.add(mark);
-    await session.evaluate(signInScript(saved.username, saved.password));
+    const filled = await session.evaluate(signInScript(saved.username, saved.password));
+    note('sign_in.filled', { step, result: filled });
+    if (filled === 'no-sign-in-field') {
+      throw new Failure('signin.stuck', undefined, { state, origin, step, filled });
+    }
     // Submitted by a real press, not by the page: Google's Next ignores a
     // script's submit.
     await submitStep(session);
     await settle(wc, async () => {}, { quietMs: 1000 });
     await movedOn(session, origin, state, deadline);
   }
+  if (Date.now() >= deadline) {
+    throw new Failure(
+      'signin.timeout',
+      `The sign-in ran out of time on ${hostOf(last.origin)} (${last.state} step). ` +
+        'Calling sign_in again carries on from there.',
+      last,
+    );
+  }
+  throw new Failure(
+    'signin.stuck',
+    `The sign-in went through six steps and ${hostOf(last.origin)} was still asking ` +
+      `(${last.state} step).`,
+    last,
+  );
 }
+
+function isGoogleOrigin(origin) {
+  return origin === 'https://accounts.google.com';
+}
+
+function hostOf(origin) {
+  try {
+    return new URL(origin).host;
+  } catch {
+    // expected: no origin was read; say so in words instead.
+    return 'the sign-in page';
+  }
+}
+
+/**
+ * The words of an error message near a sign-in form, for the trace only.
+ * They are the page's, so they never travel to the agent.
+ */
+const ERROR_TEXT = `(() => {
+  const el = Array.from(document.querySelectorAll(
+    '[role=alert], [aria-live=assertive], [aria-live=polite], .error, .alert-danger, [class*="error" i]'
+  )).find((e) => (e.innerText || '').trim());
+  return JSON.stringify({ text: el ? el.innerText.replace(/\\s+/g, ' ').trim().slice(0, 200) : null });
+})()`;
 
 /**
  * Wait, up to ten seconds, for the page to leave the step just submitted.
@@ -778,10 +850,11 @@ export async function performAction(session, action, { credentialsFor } = {}) {
         type(session, ref, action.text, Boolean(action.submit), credentialsFor),
       );
       break;
-    case 'sign_in':
+    case 'sign_in': {
       // Drives its own pages and waits between them, so it is not wrapped here.
-      await signInFromKeychain(session, credentialsFor);
-      break;
+      const signIn = await signInFromKeychain(session, credentialsFor);
+      return { ...(await snapshot(session)), signIn };
+    }
     case 'press':
       await settle(wc, () => pressKey(session.cdp, action.key));
       break;

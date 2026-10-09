@@ -8,6 +8,7 @@
  */
 
 import { Failure, attempt } from './trace.mjs';
+import { logEvent } from './trace-store.mjs';
 
 const KIND = { browse: 'browse', act: 'act' };
 
@@ -84,4 +85,22 @@ export async function reportWithRetry(send, { delays = [1000, 3000] } = {}) {
     if (tries <= delays.length) await sleep(delays[tries - 1]);
   }
   return { sent: false, tries: delays.length + 1, error: lastError };
+}
+
+/**
+ * Run something through the one-browser gate, and log it when it is turned
+ * away. A pass the gate refused used to vanish without a trace, which is how a
+ * first sign-in or a scheduled sync could silently never happen.
+ *
+ * @returns {Promise<boolean>} whether it ran
+ */
+export async function throughGate(gate, fn, label, what) {
+  const ran = await gate(fn, label);
+  if (!ran) {
+    logEvent('transport.busy', `Skipped ${what}: the browser was busy.`, {
+      ...label,
+      busy: gate.current?.() ?? null,
+    });
+  }
+  return ran;
 }
