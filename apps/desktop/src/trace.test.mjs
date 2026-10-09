@@ -186,3 +186,37 @@ describe('something thrown that cannot be read', () => {
     expect(result.record.error).toMatchObject({ name: 'Unreadable' });
   });
 });
+
+describe('what leaves the Mac', () => {
+  it('blanks the password in its encoded forms too', async () => {
+    const pw = 'p@ss "word"&1';
+    const { record } = await attempt({ kind: 'act' }, async () => {
+      secret(pw);
+      note('nav.response', { url: `https://a.test/login?pw=${encodeURIComponent(pw)}` });
+      note('script', { source: JSON.stringify({ pw }) });
+    });
+    const text = JSON.stringify(record);
+    expect(text).not.toContain(encodeURIComponent(pw));
+    expect(text).not.toContain(JSON.stringify(pw).slice(1, -1));
+  });
+
+  it('keeps a runaway trace to a size the server accepts, saying what was cut', async () => {
+    const { record } = await attempt({ kind: 'sync' }, async () => {
+      for (let i = 0; i < 5000; i += 1) note('step', { i });
+    });
+    expect(record.steps.length).toBeLessThanOrEqual(1000);
+    expect(record.steps[0].detail.i).toBe(0);
+    expect(record.steps.at(-1).detail.i).toBe(4999);
+    expect(record.steps.some((s) => s.name === 'trace.steps_cut')).toBe(true);
+  });
+
+  it('strips characters the database cannot store', async () => {
+    const { record } = await attempt(
+      { kind: 'browse', target: 'https://a.test/\u0000x' },
+      async () => {
+        note('page', { text: 'a\u0000b', title: 'a\u0000b' });
+      },
+    );
+    expect(JSON.stringify(record)).not.toContain('\\u0000');
+  });
+});

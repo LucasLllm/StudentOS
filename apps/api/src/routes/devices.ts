@@ -374,6 +374,8 @@ export function createDeviceRoutes(ctx: AppContext) {
               .object({
                 kind: z.string().max(40),
                 portalId: z.string().max(200).nullable().optional(),
+                /** The agent's request being worked on, when it is one. */
+                requestId: z.string().uuid().nullable().optional(),
                 since: z.string().datetime(),
               })
               .nullable(),

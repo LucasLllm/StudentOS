@@ -219,26 +219,36 @@ export class DbPortalSnapshots implements PortalSnapshotSource {
 
     const now = Date.now();
     const seenAgo = latest.lastSeenAt ? now - latest.lastSeenAt.getTime() : Infinity;
-    if (request.pickedUpAt) {
-      return {
-        code: 'transport.no_report',
-        message:
-          `Their computer started this ${ago(now - request.pickedUpAt.getTime())} and has not ` +
-          'reported back. It may still be working -- a sign-in can take a minute -- or the ' +
-          'report was lost on the way. Look again rather than assuming it failed.',
-      };
-    }
+    // First: a laptop that has gone quiet is asleep or offline, whatever it
+    // was doing when it went -- including this request, if it had started it.
     if (seenAgo > OFFLINE_AFTER_MS) {
       return {
         code: 'transport.offline',
         message: Number.isFinite(seenAgo)
-          ? `Their computer was last in touch ${ago(seenAgo)}: it is asleep, shut, or offline.`
+          ? `Their computer was last in touch ${ago(seenAgo)}: it is asleep, shut, or offline.` +
+            (request.pickedUpAt ? ' It had started this before it went quiet.' : '')
           : 'Their computer has never been in touch since it was linked.',
       };
     }
     const busy = (
-      latest.state as { busy?: { kind?: string; portalId?: string | null; since?: string } } | null
+      latest.state as {
+        busy?: {
+          kind?: string;
+          portalId?: string | null;
+          requestId?: string | null;
+          since?: string;
+        };
+      } | null
     )?.busy;
+    if (busy?.requestId === requestId) {
+      return {
+        code: 'transport.still_working',
+        message:
+          `Their computer is still working on this (started ` +
+          `${busy.since ? ago(now - Date.parse(busy.since)) : 'a moment ago'}). Look again ` +
+          'shortly rather than assuming it failed.',
+      };
+    }
     if (busy) {
       const what = busy.portalId ? `${busy.kind} of ${busy.portalId}` : busy.kind;
       const since = busy.since ? ` (started ${ago(now - Date.parse(busy.since))})` : '';
@@ -247,6 +257,14 @@ export class DbPortalSnapshots implements PortalSnapshotSource {
         message:
           `Their computer is busy with another browser job -- ${what}${since} -- and will get ` +
           'to this when it finishes.',
+      };
+    }
+    if (request.pickedUpAt) {
+      return {
+        code: 'transport.no_report',
+        message:
+          `Their computer collected this ${ago(now - request.pickedUpAt.getTime())} and is ` +
+          'idle now, but never reported back: the report was lost on the way. Offer to try again.',
       };
     }
     return {

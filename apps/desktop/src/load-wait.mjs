@@ -10,7 +10,7 @@
  * it needs is something that emits Electron's webContents load events.
  */
 
-import { Failure, note } from './trace.mjs';
+import { Failure, bound, note } from './trace.mjs';
 
 /**
  * Chromium's network error numbers, as failure codes.
@@ -41,15 +41,15 @@ export function waitForLoad(wc, { timeoutMs = 30_000 } = {}) {
     let status = null;
     const started = Date.now();
 
-    const navigated = (_event, url, code) => {
+    const navigated = bound((_event, url, code) => {
       status = code ?? null;
       note('nav.response', { url, status });
-    };
-    const finished = () => {
+    });
+    const finished = bound(() => {
       stop();
       resolve({ ok: true, url: wc.getURL(), status });
-    };
-    const failed = (_event, error, description, url, isMainFrame) => {
+    });
+    const failed = bound((_event, error, description, url, isMainFrame) => {
       if (!isMainFrame) {
         note('nav.subframe_failed', { netError: error, description, url });
         return;
@@ -60,13 +60,16 @@ export function waitForLoad(wc, { timeoutMs = 30_000 } = {}) {
       }
       stop();
       reject(new Failure(codeForNetError(error), undefined, { netError: error, description, url }));
-    };
-    const timer = setTimeout(() => {
-      stop();
-      const url = wc.getURL();
-      note('nav.timeout', { url, afterMs: Date.now() - started });
-      resolve({ ok: false, timedOut: true, url });
-    }, timeoutMs);
+    });
+    const timer = setTimeout(
+      bound(() => {
+        stop();
+        const url = wc.getURL();
+        note('nav.timeout', { url, afterMs: Date.now() - started });
+        resolve({ ok: false, timedOut: true, url });
+      }),
+      timeoutMs,
+    );
 
     function stop() {
       clearTimeout(timer);

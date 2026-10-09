@@ -31,9 +31,9 @@ import {
   status,
   syncPortal,
 } from './operations.mjs';
-import { attempt, onRecord } from './trace.mjs';
+import { Failure, attempt, onRecord } from './trace.mjs';
 import { flushOutbox, logEvent, queueUpload, writeLocal } from './trace-store.mjs';
-import { reportWithRetry, runWorkItem, throughGate } from './work.mjs';
+import { needsLoginFailure, reportWithRetry, runWorkItem, throughGate, whenFree } from './work.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const API_BASE = process.env['CONTEXTO_API'] ?? 'https://contextoagent.ai';
@@ -308,7 +308,7 @@ handle('addPortal', (site) => {
   // Added is added. The first sign-in and read follow quietly, and a site
   // they do not work for is signed into by the agent when it opens it. Quietly
   // for the student, not for the trace: how it went is recorded either way.
-  void throughGate(
+  void whenFree(
     drivingBrowser,
     () => attempt({ kind: 'first_sign_in', portalId: portal.id }, () => firstSignIn(portal.id)),
     { kind: 'first_sign_in', portalId: portal.id },
@@ -317,7 +317,9 @@ handle('addPortal', (site) => {
   return { portal };
 });
 handle('removePortal', (id) => removePortal(id));
-handle('syncPortal', (id) => traced({ kind: 'sync', portalId: id }, () => syncPortal(id)));
+handle('syncPortal', (id) =>
+  traced({ kind: 'sync', portalId: id }, () => syncPortal(id), needsLoginFailure),
+);
 
 /*
  * Saved sign-ins. The password crosses this boundary once, on its way to the
@@ -327,15 +329,43 @@ handle('syncPortal', (id) => traced({ kind: 'sync', portalId: id }, () => syncPo
 handle('saveCredentials', (id, creds) => saveCredentials(id, creds));
 handle('hasCredentials', (id) => ({ saved: hasCredentials(id), available: keychainAvailable() }));
 handle('clearCredentials', (id) => clearCredentials(id));
-handle('autoSignIn', (id) => traced({ kind: 'auto_sign_in', portalId: id }, () => autoSignIn(id)));
+handle('autoSignIn', (id) =>
+  traced(
+    { kind: 'auto_sign_in', portalId: id },
+    () => autoSignIn(id),
+    (signedIn) =>
+      signedIn.ok ? null : new Failure(signedIn.code ?? 'signin.no_credentials', signedIn.reason),
+  ),
+);
 
 /**
- * Run something the window asked for as a traced attempt, and hand the window
- * the value or the reason it failed.
+ * Run something the window asked for, through the one-browser gate, as a
+ * traced attempt.
+ *
+ * `judge` turns an answer that means it did not work -- a sign-in that was
+ * refused, a sync that found a sign-in page -- into the failure the trace
+ * records. The window still gets the answer it always got, so it can show it.
  */
-async function traced(label, fn) {
-  const done = await attempt(label, fn);
-  if (done.ok) return done.value;
+async function traced(label, fn, judge = () => null) {
+  let value;
+  let done;
+  const ran = await throughGate(
+    drivingBrowser,
+    async () => {
+      done = await attempt(label, async () => {
+        value = await fn();
+        const failure = judge(value);
+        if (failure) throw failure;
+        return value;
+      });
+    },
+    label,
+    `${label.kind} for ${label.portalId}`,
+  );
+  if (!ran) {
+    throw new Error('The browser is busy with other work right now. Try again in a moment.');
+  }
+  if (done.ok || value !== undefined) return value;
   throw new Error(done.message);
 }
 
@@ -401,7 +431,12 @@ async function syncAllPass({ onlyStale }) {
     }
     // Recorded as an attempt; a failure here is also kept on the portal by
     // syncPortal, which is what the Sites list shows.
-    await attempt({ kind: 'sync', portalId: portal.id }, () => syncPortal(portal.id));
+    await attempt({ kind: 'sync', portalId: portal.id }, async () => {
+      const synced = await syncPortal(portal.id);
+      const failure = needsLoginFailure(synced);
+      if (failure) throw failure;
+      return synced;
+    });
     // Per portal rather than at the end, so a slow second portal does not hold
     // back the result of the first.
     notifyChanged();
@@ -452,6 +487,7 @@ async function doPendingWork() {
     currentItem = {
       kind: item.kind,
       portalId: item.portalId || null,
+      requestId: item.id,
       since: new Date().toISOString(),
     };
     // Only a reason this app wrote itself travels back: runWorkItem keeps the

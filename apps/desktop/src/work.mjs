@@ -30,9 +30,8 @@ export async function runWorkItem(item, ops) {
       if (kind === 'browse') return ops.browsePage(item.targetUrl);
       if (kind === 'act') return ops.actOnPage(item.payload ?? {});
       const synced = await ops.syncPortal(item.portalId);
-      if (synced?.needsLogin) {
-        throw new Failure('sync.needs_login', whyLogin(synced.login), synced.login ?? {});
-      }
+      const failure = needsLoginFailure(synced);
+      if (failure) throw failure;
       return synced;
     },
   );
@@ -49,9 +48,28 @@ export async function runWorkItem(item, ops) {
   };
 }
 
+/**
+ * A sync that ended on a sign-in page did not work, whatever it returned.
+ * The one place that decision is made, so every caller records it the same.
+ *
+ * @returns {Failure | null}
+ */
+export function needsLoginFailure(synced) {
+  if (!synced?.needsLogin) return null;
+  return new Failure('sync.needs_login', whyLogin(synced.login), synced.login ?? {});
+}
+
 /** Why a site still wanted a sign-in, from what the sync recorded. */
 function whyLogin(login) {
   const where = login?.why === 'off_origin' ? 'sent us to a sign-in page' : 'showed a password box';
+  if (login?.keychain) {
+    return (
+      `The site ${where}, and the saved sign-in could not be read: the keychain ` +
+      (login.keychain === 'signin.keychain_declined'
+        ? 'prompt was declined or the keychain is locked.'
+        : 'is not available on this computer.')
+    );
+  }
   if (!login?.saved) {
     return `The site ${where}, and there is no saved sign-in for it on this computer.`;
   }
@@ -103,4 +121,27 @@ export async function throughGate(gate, fn, label, what) {
     });
   }
   return ran;
+}
+
+/**
+ * Run something once the browser is free, waiting a while for it.
+ *
+ * For work nobody is watching but that must still happen -- a new site's first
+ * sign-in. The three-second work poll holds the gate for a moment every time it
+ * looks, so turning such work away at the first collision meant it often never
+ * ran. Logged only if it gives up.
+ *
+ * @returns {Promise<boolean>} whether it ran
+ */
+export async function whenFree(gate, fn, label, what, { tries = 40, waitMs = 3000 } = {}) {
+  for (let i = 0; i < tries; i += 1) {
+    if (await gate(fn, label)) return true;
+    await sleep(waitMs);
+  }
+  logEvent('transport.busy', `Gave up on ${what}: the browser stayed busy.`, {
+    ...label,
+    busy: gate.current?.() ?? null,
+    waitedMs: tries * waitMs,
+  });
+  return false;
 }

@@ -107,3 +107,56 @@ describe('outbox', () => {
     expect(readdirSync(join(dir, 'outbox'))).toEqual([]);
   });
 });
+
+describe('outbox, when the server refuses a trace', () => {
+  const refused = (status) => {
+    const error = new Error(`refused ${status}`);
+    error.status = status;
+    return error;
+  };
+
+  it('sets aside a trace the server will never take, and sends the rest', async () => {
+    queueUpload(record('a', { startedAt: '2026-10-09T12:00:00.000Z' }));
+    queueUpload(record('b', { startedAt: '2026-10-09T12:00:01.000Z' }));
+    const sent = [];
+    const result = await flushOutbox(async (r) => {
+      if (r.id === 'a') throw refused(400);
+      sent.push(r.id);
+    });
+    expect(sent).toEqual(['b']);
+    expect(result).toEqual({ sent: 1, kept: 0, setAside: 1 });
+    expect(readdirSync(join(dir, 'outbox', 'rejected'))).toEqual(['a.json']);
+  });
+
+  it('keeps trying after a sign-in problem or a server error', async () => {
+    queueUpload(record('a'));
+    for (const status of [401, 429, 500]) {
+      const result = await flushOutbox(async () => {
+        throw refused(status);
+      });
+      expect(result.kept).toBe(1);
+    }
+  });
+
+  it('sets aside a trace that has failed too many times, so it cannot block forever', async () => {
+    queueUpload(record('a'));
+    let result;
+    for (let i = 0; i < 50; i += 1) {
+      result = await flushOutbox(async () => {
+        throw refused(500);
+      });
+    }
+    expect(result.setAside).toBe(1);
+    expect(readdirSync(join(dir, 'outbox', 'rejected'))).toEqual(['a.json']);
+  });
+
+  it('never sends its own bookkeeping', async () => {
+    queueUpload(record('a'));
+    await flushOutbox(async () => {
+      throw refused(500);
+    });
+    const sent = [];
+    await flushOutbox(async (r) => sent.push(r));
+    expect(sent[0]._uploadTries).toBeUndefined();
+  });
+});

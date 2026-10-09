@@ -96,6 +96,13 @@ export class DeviceUnlinked extends Error {
   }
 }
 
+/** An error that says which HTTP status it came from, so a caller can tell "refused" from "down". */
+function withStatus(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   const response = await fetch(new URL(path, baseUrl), {
     method,
@@ -131,7 +138,8 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   if (parsed === null) {
     // Naming the address matters: the usual cause is pointing at a server
     // that does not have these routes yet, and the address is the clue.
-    throw new Error(
+    throw withStatus(
+      response.status,
       response.status === 404
         ? `${new URL(path, baseUrl).origin} has no device-linking API. ` +
             'Is CONTEXTO_API pointing at the right server, and is it up to date?'
@@ -141,7 +149,10 @@ async function api(baseUrl, path, { method = 'POST', token, body } = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(parsed.message ?? `${method} ${path} failed with ${response.status}`);
+    throw withStatus(
+      response.status,
+      parsed.message ?? `${method} ${path} failed with ${response.status}`,
+    );
   }
   return parsed;
 }

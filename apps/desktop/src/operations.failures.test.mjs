@@ -30,9 +30,11 @@ vi.mock('./explorer.mjs', () => ({
     redacted: false,
   })),
 }));
+const keychain = { creds: null, refused: null };
 vi.mock('./credentials.mjs', () => ({
-  readCredentials: () => null,
+  readCredentials: () => keychain.creds,
   saveCredentials: () => {},
+  savedSignIn: () => ({ ...keychain }),
 }));
 const pushSnapshot = vi.fn();
 vi.mock('./sync.mjs', async (original) => ({
@@ -46,6 +48,8 @@ beforeEach(() => {
   process.env['CONTEXTO_CONFIG_DIR'] = dir;
   process.env['CONTEXTO_LOG_DIR'] = dir;
   pushSnapshot.mockReset();
+  keychain.creds = null;
+  keychain.refused = null;
 });
 afterEach(() => {
   delete process.env['CONTEXTO_CONFIG_DIR'];
@@ -110,5 +114,36 @@ describe('operations, when they fail', () => {
     pushSnapshot.mockRejectedValue(new DeviceUnlinked('gone'));
     const { syncPortal } = await import('./operations.mjs');
     await expect(syncPortal('kognity')).rejects.toMatchObject({ code: 'sync.device_unlinked' });
+  });
+});
+
+describe('a sync when the keychain will not answer', () => {
+  it('still reads the site, and names the keychain if the site wants a sign-in', async () => {
+    linked([
+      {
+        id: 'kognity',
+        url: 'https://k.test/',
+        origin: 'https://k.test',
+        loggedInAt: '2026-10-09T00:00:00.000Z',
+      },
+    ]);
+    keychain.refused = 'signin.keychain_declined';
+    const { explore } = await import('./explorer.mjs');
+    explore.mockResolvedValueOnce({
+      exploredAt: '2026-10-09T12:00:00.000Z',
+      pages: [],
+      pagesVisited: 1,
+      complete: false,
+      needsLogin: true,
+      loginWhy: 'password_field',
+      redacted: false,
+    });
+    pushSnapshot.mockResolvedValue({});
+    const { syncPortal } = await import('./operations.mjs');
+    const result = await syncPortal('kognity');
+    expect(result.login).toMatchObject({ saved: false, keychain: 'signin.keychain_declined' });
+
+    const { needsLoginFailure } = await import('./work.mjs');
+    expect(needsLoginFailure(result).message).toMatch(/keychain prompt was declined/);
   });
 });

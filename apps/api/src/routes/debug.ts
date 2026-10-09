@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { and, desc, eq, type SQL } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { browserAttempts, siteRefreshRequests, user } from '@contexto/db';
 import { ContextoError } from '@contexto/shared';
@@ -49,7 +49,9 @@ export function createDebugRoutes(ctx: AppContext) {
             message: browserAttempts.message,
             startedAt: browserAttempts.startedAt,
             endedAt: browserAttempts.endedAt,
-            screenshot: browserAttempts.screenshot,
+            // Whether there is one, not the image: a list of 500 would
+            // otherwise carry up to a gigabyte of screenshots nobody looks at.
+            hasScreenshot: sql<boolean>`${browserAttempts.screenshot} is not null`,
           })
           .from(browserAttempts)
           .innerJoin(user, eq(user.id, browserAttempts.userId))
@@ -58,10 +60,9 @@ export function createDebugRoutes(ctx: AppContext) {
           .limit(q.limit);
 
         return c.json(
-          rows.map(({ screenshot, ...row }) => ({
+          rows.map((row) => ({
             ...row,
             durationMs: row.endedAt.getTime() - row.startedAt.getTime(),
-            hasScreenshot: Boolean(screenshot),
           })),
         );
       },

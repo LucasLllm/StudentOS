@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CODES } from './failure-codes.mjs';
 import { Failure, onRecord } from './trace.mjs';
-import { reportWithRetry, runWorkItem, throughGate } from './work.mjs';
+import { reportWithRetry, runWorkItem, throughGate, whenFree } from './work.mjs';
 import { oneAtATime } from './operations.mjs';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,5 +162,23 @@ describe('throughGate', () => {
       process.env['CONTEXTO_LOG_DIR'] = TEST_LOG_DIR;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('whenFree', () => {
+  it('waits for the browser instead of dropping the work', async () => {
+    const gate = oneAtATime();
+    let release;
+    const holding = gate(() => new Promise((r) => (release = r)), { kind: 'agent_work' });
+    let ran = false;
+    const waiting = whenFree(gate, async () => void (ran = true), { kind: 'first_sign_in' }, 'x', {
+      tries: 5,
+      waitMs: 5,
+    });
+    await new Promise((r) => setTimeout(r, 8));
+    release();
+    await holding;
+    expect(await waiting).toBe(true);
+    expect(ran).toBe(true);
   });
 });

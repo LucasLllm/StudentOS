@@ -369,7 +369,8 @@ export const actInBrowser: Tool<ActInput, unknown> = {
      * in; a second factor is the student's step, and the agent must not tell
      * them it is done when it is waiting on them.
      */
-    if (action.action === 'sign_in' && page?.signIn?.status === 'second_factor') {
+    // However it started -- sign_in, or typing into a password box.
+    if (page?.signIn?.status === 'second_factor') {
       return {
         finished: true,
         acted: true,

@@ -608,11 +608,8 @@ async function signInFromKeychain(session, credentialsFor) {
    * here is picked up by the next sign_in, from wherever it got to.
    */
   const deadline = Date.now() + SIGN_IN_BUDGET_MS;
-  let last = { state: null, origin: null };
   for (let step = 0; step < 6 && Date.now() < deadline; step += 1) {
-    const state = await session.evaluate(STEP_CHECK);
-    const { origin } = await run(session, ORIGIN);
-    last = { state, origin };
+    const { state, origin } = await whereSignInIs(session);
     note('sign_in.step', { step, state, origin });
 
     // The student finishes this one step; it is theirs, not a failure.
@@ -685,6 +682,19 @@ async function signInFromKeychain(session, credentialsFor) {
     await settle(wc, async () => {}, { quietMs: 1000 });
     await movedOn(session, origin, state, deadline);
   }
+  /*
+   * One last look before calling it a failure: the fill that used the last
+   * step, or the last seconds, may have been the one that worked.
+   */
+  const final = await whereSignInIs(session);
+  note('sign_in.final_look', final);
+  if (final.state === 'none' && !isGoogleOrigin(final.origin)) {
+    return { status: 'signed_in', steps: 6, origin: final.origin };
+  }
+  if (final.state === 'second-factor') {
+    return { status: 'second_factor', steps: 6, origin: final.origin };
+  }
+  const last = final;
   if (Date.now() >= deadline) {
     throw new Failure(
       'signin.timeout',
@@ -699,6 +709,27 @@ async function signInFromKeychain(session, credentialsFor) {
       `(${last.state} step).`,
     last,
   );
+}
+
+/**
+ * What the sign-in page is asking for, and where it is.
+ *
+ * Asked again, briefly, when the page is between documents: a check that lands
+ * mid-navigation fails with the old page's context gone, which is the page
+ * moving on -- not a reason to abandon the sign-in.
+ */
+async function whereSignInIs(session) {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      const state = await session.evaluate(STEP_CHECK);
+      const { origin } = await run(session, ORIGIN);
+      return { state, origin };
+    } catch (error) {
+      if (tries >= 4) throw error;
+      note('sign_in.page_between', { tries, error: String(error?.message ?? error) });
+      await sleep(750);
+    }
+  }
 }
 
 function isGoogleOrigin(origin) {
@@ -753,9 +784,9 @@ async function type(session, ref, text, submit, credentialsFor) {
   if (box.missing) throw gone(ref);
   if (box.password) {
     // The agent's text is dropped here, whatever it was. A password box takes
-    // only the sign-in saved for this site, typed by this machine.
-    await signInFromKeychain(session, credentialsFor);
-    return;
+    // only the sign-in saved for this site, typed by this machine -- and how
+    // that went is handed back like any sign_in.
+    return { signIn: await signInFromKeychain(session, credentialsFor) };
   }
   if (box.notEditable) {
     throw new ActionError('page.not_editable', `[${ref}] is not something that can be typed into.`);
@@ -774,10 +805,17 @@ async function select(session, ref, value) {
   if (chosen.notSelect)
     throw new ActionError('page.not_select', `[${ref}] is not a drop-down list.`);
   if (chosen.noMatch) {
-    const options = (chosen.options ?? []).map((o) => `"${o}"`).join(', ');
+    /*
+     * The options' words are the page's, and only words this app wrote travel
+     * back as a reason. They are in the page reading, under the warning that
+     * goes with page text; the reason only points there.
+     */
+    const count = (chosen.options ?? []).length;
+    note('select.no_match', { ref, offered: count });
     throw new ActionError(
       'page.no_option',
-      `[${ref}] has no option matching "${value}". It offers: ${options}.`,
+      `[${ref}] has no option matching "${value}". It has ${count} options -- look at the ` +
+        'page again and choose one of them by its text.',
     );
   }
 }
@@ -846,9 +884,13 @@ export async function performAction(session, action, { credentialsFor } = {}) {
       if (typeof action.text !== 'string') {
         throw new ActionError('page.needs_text', 'type needs the text to type.');
       }
-      await settle(wc, () =>
-        type(session, ref, action.text, Boolean(action.submit), credentialsFor),
-      );
+      {
+        let typed;
+        await settle(wc, async () => {
+          typed = await type(session, ref, action.text, Boolean(action.submit), credentialsFor);
+        });
+        if (typed?.signIn) return { ...(await snapshot(session)), signIn: typed.signIn };
+      }
       break;
     case 'sign_in': {
       // Drives its own pages and waits between them, so it is not wrapped here.

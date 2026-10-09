@@ -9,7 +9,8 @@
 
 import { PortalBrowser } from './browser.mjs';
 import { fillScript, explainFailure, INSPECT_SCRIPT } from './sign-in.mjs';
-import { readCredentials, saveCredentials } from './credentials.mjs';
+import { readCredentials, saveCredentials, savedSignIn } from './credentials.mjs';
+import { needsLoginFailure } from './work.mjs';
 import { explore } from './explorer.mjs';
 import { SNAPSHOT_SCRIPT, performAction } from './page-actions.mjs';
 import { DeviceUnlinked, pushSnapshot, readConfig, writeConfig } from './sync.mjs';
@@ -220,9 +221,15 @@ export function addSite({ name, url, username, password }) {
  */
 export async function firstSignIn(portalId) {
   const signedIn = await autoSignIn(portalId);
+  if (!signedIn.ok) {
+    // Nothing saved is nothing to do, not a failure: the agent signs in later.
+    if (!signedIn.attempted) return;
+    throw new Failure(signedIn.code, signedIn.reason);
+  }
   // No second look needed: signing in recorded where the site put us, which
   // is the site.
-  if (signedIn.ok) await syncPortal(portalId);
+  const failure = needsLoginFailure(await syncPortal(portalId));
+  if (failure) throw failure;
 }
 
 /**
@@ -459,11 +466,12 @@ function updatePortal(portalId, patch) {
  * into the page and are never written anywhere else, never logged, and never
  * sent to the server.
  */
-export async function autoSignIn(portalId) {
+export async function autoSignIn(portalId, { saved: known } = {}) {
   const portal = listPortals().find((p) => p.id === portalId);
   if (!portal) throw new Failure('sync.unknown_site', `There is no site called ${portalId}.`);
 
-  const saved = readCredentials(portalId);
+  // Handed in by a sync that already read it, so the keychain asks once.
+  const saved = known ?? readCredentials(portalId);
   if (!saved) {
     note('auto_sign_in.no_credentials', { portalId });
     return {
@@ -556,6 +564,9 @@ async function evaluate(browser, expression, sessionId) {
  * answer "what is due Friday" from `string<date>`.
  */
 export function syncPortal(portalId, options = {}) {
+  // A second caller joins the run already going; its trace says so, since
+  // the steps all belong to the first.
+  if (inFlight.has(portalId)) note('sync.joined_running', { portalId });
   return coalesce(inFlight, portalId, () => runSync(portalId, options));
 }
 
@@ -578,9 +589,12 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
    * something and it says the site needs signing into again -- a worse way to
    * learn it than never noticing at all.
    */
+  // Read once per sync: each read can be a keychain prompt, and a refused one
+  // must not stop a crawl whose session still works.
+  const keychain = savedSignIn(portalId);
   let recovery = null;
-  if (!portal.loggedInAt && readCredentials(portalId)) {
-    recovery = await autoSignIn(portalId);
+  if (!portal.loggedInAt && keychain.creds) {
+    recovery = await autoSignIn(portalId, { saved: keychain.creds });
     note('sync.signed_in_first', { ok: recovery.ok, code: recovery.code ?? null });
     if (recovery.ok) portal.loggedInAt = new Date().toISOString();
   }
@@ -617,9 +631,9 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
      * look again -- once. Reporting an empty site when the means to fix it is
      * sitting in the keychain is the wrong answer.
      */
-    if (map.needsLogin && !retried && readCredentials(portalId)) {
+    if (map.needsLogin && !retried && keychain.creds) {
       await browser.close();
-      recovery = await autoSignIn(portalId);
+      recovery = await autoSignIn(portalId, { saved: keychain.creds });
       note('sync.signed_in_again', { ok: recovery.ok, code: recovery.code ?? null });
       if (recovery.ok) return runSync(portalId, { budget, retried: true });
     }
@@ -637,7 +651,8 @@ async function runSync(portalId, { budget = 40, retried = false } = {}) {
     if (map.needsLogin) {
       result.login = {
         why: map.loginWhy ?? null,
-        saved: Boolean(readCredentials(portalId)),
+        saved: Boolean(keychain.creds),
+        keychain: keychain.refused,
         recovery: recovery
           ? { ok: recovery.ok, code: recovery.code, reason: recovery.reason }
           : null,

@@ -611,9 +611,10 @@ describe('a wait that runs out', () => {
     expect(waited.why?.message).toMatch(/kognity/);
   });
 
-  it('says the work started and was never reported, when it was collected', async () => {
+  it('says the report was lost when the work was collected and the computer is idle', async () => {
     const alice = await createUser();
-    await linkedDevice(alice.token);
+    const device = await linkedDevice(alice.token);
+    await db.update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, device.deviceId));
     const id = await request(alice.id);
     await db
       .update(siteRefreshRequests)
@@ -621,6 +622,68 @@ describe('a wait that runs out', () => {
       .where(eq(siteRefreshRequests.id, id));
     const waited = await wait(id);
     expect(waited.why).toMatchObject({ code: 'transport.no_report' });
+  });
+
+  it('says it is still working when the heartbeat names this request', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    const id = await request(alice.id);
+    await db
+      .update(siteRefreshRequests)
+      .set({ pickedUpAt: new Date() })
+      .where(eq(siteRefreshRequests.id, id));
+    await db
+      .update(devices)
+      .set({
+        lastSeenAt: new Date(),
+        state: { busy: { kind: 'browse', requestId: id, since: new Date().toISOString() } },
+      })
+      .where(eq(devices.id, device.deviceId));
+    const waited = await wait(id);
+    expect(waited.why).toMatchObject({ code: 'transport.still_working' });
+  });
+
+  it('calls a computer that collected the work and then went quiet offline, not working', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    const id = await request(alice.id);
+    await db
+      .update(siteRefreshRequests)
+      .set({ pickedUpAt: new Date(Date.now() - 4 * 60_000) })
+      .where(eq(siteRefreshRequests.id, id));
+    await db
+      .update(devices)
+      .set({ lastSeenAt: new Date(Date.now() - 3 * 60_000) })
+      .where(eq(devices.id, device.deviceId));
+    const waited = await wait(id);
+    expect(waited.why).toMatchObject({ code: 'transport.offline' });
+    expect(waited.why?.message).toMatch(/had started this/);
+  });
+
+  it('says it is queued behind other work, even once collected', async () => {
+    const alice = await createUser();
+    const device = await linkedDevice(alice.token);
+    const id = await request(alice.id);
+    await db
+      .update(siteRefreshRequests)
+      .set({ pickedUpAt: new Date() })
+      .where(eq(siteRefreshRequests.id, id));
+    await db
+      .update(devices)
+      .set({
+        lastSeenAt: new Date(),
+        state: {
+          busy: {
+            kind: 'refresh',
+            portalId: 'kognity',
+            requestId: '99999999-9999-4999-8999-999999999999',
+            since: new Date().toISOString(),
+          },
+        },
+      })
+      .where(eq(devices.id, device.deviceId));
+    const waited = await wait(id);
+    expect(waited.why).toMatchObject({ code: 'transport.busy' });
   });
 
   it('calls an idle, online computer that never collected the work a bug', async () => {

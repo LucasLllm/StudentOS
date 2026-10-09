@@ -23,7 +23,7 @@
  */
 
 import { summarizeShape } from './recorder.mjs';
-import { Failure, note } from './trace.mjs';
+import { Failure, bound, note } from './trace.mjs';
 
 const DEFAULT_BUDGET = 40;
 
@@ -79,12 +79,12 @@ export async function readPage(
 
   const offRequest = cdp.on(
     'Network.requestWillBeSent',
-    (p) => methods.set(p.requestId, p.request.method),
+    bound((p) => methods.set(p.requestId, p.request.method)),
     sessionId,
   );
   const offResponse = cdp.on(
     'Network.responseReceived',
-    (p) => {
+    bound((p) => {
       if (!/json/i.test(p.response.mimeType)) return;
       // Origin lock applies to what we RECORD as well as where we navigate,
       // so third-party telemetry never enters the map.
@@ -94,12 +94,14 @@ export async function readPage(
         status: p.response.status,
         method: methods.get(p.requestId) ?? 'GET',
       });
-    },
+    }),
     sessionId,
   );
   const offFinished = cdp.on(
     'Network.loadingFinished',
-    async (p) => {
+    // Bound: the protocol fires these from its own loop, and the note below
+    // belongs to the sync that is listening.
+    bound(async (p) => {
       const meta = inflight.get(p.requestId);
       if (!meta) return;
       inflight.delete(p.requestId);
@@ -125,15 +127,27 @@ export async function readPage(
         });
         components.push({ ...meta, shape: null, empty: null });
       }
-    },
+    }),
     sessionId,
   );
 
+  // In a finally: a page that fails to load throws, and listeners left behind
+  // would fire for every later page of the sync.
+  try {
+    return await readLoadedPage(browser, cdp, sessionId, url, settleMs, components);
+  } finally {
+    offRequest();
+    offResponse();
+    offFinished();
+  }
+}
+
+async function readLoadedPage(browser, cdp, sessionId, url, settleMs, components) {
   await browser.navigate(url, sessionId);
   // Components load after the load event, so give the XHRs a moment to land.
   await new Promise((r) => setTimeout(r, settleMs));
 
-  const { result } = await cdp.send(
+  const { result, exceptionDetails } = await cdp.send(
     'Runtime.evaluate',
     {
       expression: `JSON.stringify({
@@ -150,10 +164,12 @@ export async function readPage(
     sessionId,
   );
 
-  offRequest();
-  offResponse();
-  offFinished();
-
+  if (exceptionDetails) {
+    throw new Failure('page.script_failed', undefined, {
+      url,
+      description: exceptionDetails.exception?.description ?? exceptionDetails.text ?? null,
+    });
+  }
   const page = JSON.parse(result.value);
   return {
     url,

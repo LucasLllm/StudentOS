@@ -101,3 +101,25 @@ describe('codeForNetError', () => {
     expect(codeForNetError(error)).toBe(code);
   });
 });
+
+describe('events Electron fires from outside the attempt', () => {
+  it('still land in the attempt that was listening', async () => {
+    vi.useRealTimers();
+    const wc = contents('https://a.test/');
+    // Fired from a timer made before the attempt began -- the way Electron's
+    // own event loop delivers did-navigate, with no attempt in its context.
+    const fire = (cb) => setTimeout(cb, 5);
+    let later;
+    fire(() => later?.());
+    const { record } = await attempt({ kind: 'browse' }, async () => {
+      const done = waitForLoad(wc, { timeoutMs: 1000 });
+      later = () => {
+        wc.emit('did-navigate', {}, 'https://a.test/', 200, 'OK');
+        wc.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://a.test/', true);
+        wc.emit('did-finish-load');
+      };
+      return done;
+    });
+    expect(record.steps.map((s) => s.name)).toEqual(['nav.response', 'nav.aborted']);
+  });
+});

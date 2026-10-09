@@ -340,12 +340,17 @@ describe('acting on the page', () => {
     expect(JSON.stringify(session.evaluate.mock.calls)).not.toContain('hunter2');
   });
 
-  it('lists the choices when the one asked for is not there', async () => {
+  it('says how many choices there are when the one asked for is not there', async () => {
     const session = fakeSession(() =>
       JSON.stringify({ noMatch: true, options: ['Fall', 'Spring'] }),
     );
+    // Counted, not quoted: the options' words are the page's, and the page's
+    // words never travel back as a reason.
     await expect(act(session, { action: 'select', ref: 5, value: 'Summer' })).rejects.toThrow(
-      /"Summer".*"Fall", "Spring"/,
+      /"Summer".*2 options/,
+    );
+    await expect(act(session, { action: 'select', ref: 5, value: 'Summer' })).rejects.not.toThrow(
+      /Fall/,
     );
   });
 
@@ -809,6 +814,48 @@ describe('signing in', () => {
     });
     expect(result.code).toBe('signin.rejected');
     expect(JSON.stringify(result)).not.toContain('hunter2');
+  });
+
+  it('looks once more before failing, in case the last step was the one that worked', async () => {
+    const steps = [0, 1, 2, 3, 4, 5].map((i) => ({
+      state: 'username',
+      origin: `https://step${i}.studyo.app`,
+    }));
+    const session = fakeSession(signInFlow(steps));
+    const after = await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(after.signIn).toMatchObject({ status: 'signed_in', steps: 6 });
+  });
+
+  it('waits out a look that lands while the page is between documents', async () => {
+    const flow = signInFlow([{ state: 'password', origin: 'https://studyo.app' }]);
+    let between = 1;
+    const session = fakeSession((script) => {
+      if (script.includes('second-factor') && between > 0) {
+        between -= 1;
+        throw new Error('Execution context was destroyed.');
+      }
+      return flow(script);
+    });
+    const after = await runAction(
+      session,
+      { action: 'sign_in' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(after.signIn.status).toBe('signed_in');
+  });
+
+  it('hands back how the sign-in went when it started from typing into a password box', async () => {
+    const session = fakeSession(signInFlow([{ state: 'password', origin: 'https://studyo.app' }]));
+    const after = await runAction(
+      session,
+      { action: 'type', ref: 5, text: 'x' },
+      { credentialsFor: () => ({ username: 'alice', password: 'hunter2' }) },
+    );
+    expect(after.signIn).toMatchObject({ status: 'signed_in' });
   });
 
   it('types the saved sign-in, never the agent text, into a password box', async () => {

@@ -114,3 +114,23 @@ export function clearCredentials(portalId) {
     return false;
   }
 }
+
+/**
+ * The saved sign-in for a background job that can carry on without one.
+ *
+ * A sync whose session cookies still work does not need the keychain at all,
+ * so a refused keychain prompt must not stop it -- it is noted, and reported as
+ * the reason if the site does turn out to want a sign-in.
+ *
+ * @returns {{ creds: { username: string, password: string } | null,
+ *   refused: 'signin.keychain_declined' | 'signin.keychain_unavailable' | null }}
+ */
+export function savedSignIn(portalId, options) {
+  try {
+    return { creds: readCredentials(portalId, options), refused: null };
+  } catch (error) {
+    if (!(error instanceof Failure)) throw error;
+    note('keychain.carrying_on_without', { portalId, code: error.code });
+    return { creds: null, refused: error.code };
+  }
+}

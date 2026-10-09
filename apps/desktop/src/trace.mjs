@@ -65,13 +65,27 @@ export function note(name, detail) {
 /** A string that must never be written: a password, read from the keychain. */
 export function secret(value) {
   const current = store.getStore();
-  if (current && typeof value === 'string' && value) current.secrets.add(value);
+  if (!current || typeof value !== 'string' || !value) return;
+  // And the forms it takes on its way through a URL or a script's source.
+  for (const form of [value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)]) {
+    current.secrets.add(form);
+  }
 }
 
 /** How to take a screenshot if this attempt fails. */
 export function setCapture(fn) {
   const current = store.getStore();
   if (current) current.capture = fn;
+}
+
+/**
+ * Tie a callback to the attempt under way, so it records into that attempt
+ * whenever it runs. Needed for event listeners: Electron and the protocol fire
+ * them from their own loop, outside the attempt that registered them, and a
+ * note made there would otherwise go nowhere.
+ */
+export function bound(fn) {
+  return store.getStore() ? AsyncLocalStorage.bind(fn) : fn;
 }
 
 /** Whether something is running inside an attempt right now. */
@@ -92,7 +106,8 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
     kind,
     requestId,
     portalId,
-    target,
+    // An agent's URL can be any length; the server keeps the first 2000.
+    target: typeof target === 'string' ? target.slice(0, 2000) : target,
     startedAt: new Date(started).toISOString(),
     endedAt: null,
     outcome: null,
@@ -136,7 +151,7 @@ export async function attempt({ kind, requestId = null, portalId = null, target 
     record.endedAt = new Date().toISOString();
   }
 
-  const clean = redact(record, current.secrets);
+  const clean = finish(record, current.secrets);
   try {
     sink?.(clean);
   } catch (error) {
@@ -211,11 +226,31 @@ function clip(value) {
 }
 
 /** A copy of the record with every registered secret blanked. */
-function redact(record, secrets) {
-  if (!secrets.size) return record;
+/** Most steps one record keeps: the first and last half, and a note of the cut. */
+const MAX_STEPS = 1000;
+
+/**
+ * The record as it may leave this process: secrets blanked, NUL characters
+ * (which Postgres will not store) removed, and a runaway list of steps cut
+ * down to what the server accepts -- keeping how it started and how it ended,
+ * which is where the explanation is.
+ */
+function finish(record, secrets) {
+  if (record.steps.length > MAX_STEPS) {
+    const half = MAX_STEPS / 2 - 1;
+    const cut = record.steps.length - 2 * half;
+    record.steps = [
+      ...record.steps.slice(0, half),
+      { t: record.steps[half].t, name: 'trace.steps_cut', detail: { cut } },
+      ...record.steps.slice(-half),
+    ];
+  }
+  // Longest secret first, so a password is blanked whole before any shorter
+  // form of it that it happens to contain.
+  const ordered = [...secrets].sort((a, b) => b.length - a.length);
   const blank = (s) => {
-    let out = s;
-    for (const secretValue of secrets) out = out.split(secretValue).join('•••');
+    let out = s.replaceAll('\u0000', '');
+    for (const secretValue of ordered) out = out.split(secretValue).join('•••');
     return out;
   };
   const walk = (value) => {

@@ -18,6 +18,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -70,15 +71,30 @@ export function queueUpload(record) {
   writeFileSync(join(outboxDir(), `${record.id}.json`), JSON.stringify(record), { mode: 0o600 });
 }
 
+/** How many times one trace is tried before it is set aside. */
+const MAX_TRIES = 50;
+
 /**
- * Send what is waiting, oldest first, stopping at the first failure.
+ * Whether a refusal means this trace will never be accepted, however often it
+ * is sent: the server looked at it and said no. Not a sign-in problem (401),
+ * not "slow down" (429) -- those pass, and so does a server that is down.
+ */
+function neverAccepted(error) {
+  const status = error?.status;
+  return status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
+}
+
+/**
+ * Send what is waiting, oldest first.
  *
- * Stopping rather than skipping: a failure is nearly always the network, and
- * the next record would fail the same way. The order also stays the order
- * things happened in.
+ * A failure that is about the connection or the server stops the flush: the
+ * next record would fail the same way, and the order stays the order things
+ * happened in. A trace the server refuses for itself -- or one that has failed
+ * MAX_TRIES times -- is set aside in outbox/rejected rather than left to block
+ * every trace behind it forever.
  *
  * @param {(record: object) => Promise<unknown>} send
- * @returns {Promise<{ sent: number, kept: number }>}
+ * @returns {Promise<{ sent: number, kept: number, setAside?: number }>}
  */
 export async function flushOutbox(send) {
   const dir = outboxDir();
@@ -86,7 +102,7 @@ export async function flushOutbox(send) {
   for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
     const path = join(dir, name);
     try {
-      waiting.push({ path, record: JSON.parse(readFileSync(path, 'utf8')) });
+      waiting.push({ path, name, stored: JSON.parse(readFileSync(path, 'utf8')) });
     } catch (error) {
       // A half-written file from a crash. It can never be sent, so keeping it
       // would block every flush after it.
@@ -97,21 +113,38 @@ export async function flushOutbox(send) {
       rmSync(path, { force: true });
     }
   }
-  waiting.sort((a, b) => String(a.record.startedAt).localeCompare(String(b.record.startedAt)));
+  waiting.sort((a, b) => String(a.stored.startedAt).localeCompare(String(b.stored.startedAt)));
 
   let sent = 0;
-  for (const { path, record } of waiting) {
+  let setAside = 0;
+  for (const [index, { path, name, stored }] of waiting.entries()) {
+    const { _uploadTries: tries = 0, ...record } = stored;
     try {
       await send(record);
     } catch (error) {
+      const why = String(error?.message ?? error);
+      if (neverAccepted(error) || tries + 1 >= MAX_TRIES) {
+        logEvent('transport.report_failed', 'A trace could not be sent and was set aside.', {
+          id: record.id,
+          status: error?.status ?? null,
+          tries: tries + 1,
+          error: why,
+        });
+        const rejected = ensure(join(dir, 'rejected'));
+        renameSync(path, join(rejected, name));
+        setAside += 1;
+        continue;
+      }
+      writeFileSync(path, JSON.stringify({ ...record, _uploadTries: tries + 1 }), { mode: 0o600 });
       logEvent('transport.report_failed', 'A trace could not be sent; it will be tried again.', {
         id: record.id,
-        error: String(error?.message ?? error),
+        status: error?.status ?? null,
+        error: why,
       });
-      return { sent, kept: waiting.length - sent };
+      return { sent, kept: waiting.length - index, ...(setAside ? { setAside } : {}) };
     }
     rmSync(path, { force: true });
     sent += 1;
   }
-  return { sent, kept: 0 };
+  return { sent, kept: 0, ...(setAside ? { setAside } : {}) };
 }

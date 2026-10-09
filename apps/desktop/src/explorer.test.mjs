@@ -235,3 +235,26 @@ describe('a site that cannot be read', () => {
     expect(loginReason({ finalUrl: `${PORTAL}/grades` }, PORTAL)).toBeNull();
   });
 });
+
+describe('readPage, when the page fails to load', () => {
+  it('removes its listeners, so they do not fire for the next page', async () => {
+    const { Failure } = await import('./trace.mjs');
+    const live = new Set();
+    const browser = {
+      cdp: {
+        on: (method) => {
+          live.add(method);
+          return () => live.delete(method);
+        },
+        send: async () => ({}),
+      },
+      navigate: async () => {
+        throw new Failure('nav.dns');
+      },
+    };
+    await expect(
+      readPage(browser, 'S', PORTAL, { origin: PORTAL, settleMs: 0 }),
+    ).rejects.toMatchObject({ code: 'nav.dns' });
+    expect([...live]).toEqual([]);
+  });
+});
