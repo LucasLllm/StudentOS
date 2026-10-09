@@ -6,6 +6,7 @@ export default defineConfig({
       '{packages,apps}/*/src/**/*.test.{ts,tsx}',
       'apps/relay/*.test.mjs',
       'apps/desktop/src/**/*.test.mjs',
+      'eslint-rules/*.test.mjs',
     ],
     // Integration tests share one Postgres database, so parallel files would
     // race on the same rows. The suite is small; correctness beats speed here.

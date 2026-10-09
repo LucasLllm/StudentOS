@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
+import explainedCatch from './eslint-rules/explained-catch.js';
 
 export default tseslint.config(
   {
@@ -38,6 +39,15 @@ export default tseslint.config(
     files: ['**/*.cjs'],
     languageOptions: { sourceType: 'commonjs' },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+
+  {
+    // The desktop app drives browsers nobody can watch, so a caught error has
+    // to be recorded, rethrown or explained. See eslint-rules/explained-catch.js.
+    files: ['apps/desktop/src/**/*.mjs'],
+    ignores: ['apps/desktop/src/**/*.test.mjs'],
+    plugins: { contexto: { rules: { 'explained-catch': explainedCatch } } },
+    rules: { 'contexto/explained-catch': 'error' },
   },
 
   // Must stay last: turns off stylistic rules that would fight Prettier.
